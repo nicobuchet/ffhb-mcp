@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import type { AppConfig } from "../config/config.js";
+import { COMPETITION_SEARCH_LIMIT_MAX, COMPETITION_SEARCH_LIMIT_MIN } from "../domain/navigation.js";
 import type { FfhbClient } from "../ffhb/client.js";
 import type { PageIndexer } from "../indexing/pageIndexer.js";
 import { compactPage, compactSearchHit, jsonText } from "./format.js";
@@ -12,6 +13,50 @@ export interface ToolDependencies {
 }
 
 export function registerTools(server: McpServer, dependencies: ToolDependencies): void {
+  server.registerTool(
+    "ffhb_list_seasons",
+    {
+      title: "List FFHandball seasons",
+      description: "List FFHandball seasons and their available competition types using live FFHandball navigation data.",
+      inputSchema: {},
+    },
+    async () => {
+      const output = await dependencies.client.listSeasons();
+
+      return {
+        content: [{ type: "text", text: jsonText(output) }],
+        structuredContent: output,
+      };
+    },
+  );
+
+  server.registerTool(
+    "ffhb_search_competitions",
+    {
+      title: "Search FFHandball competitions",
+      description: "Search live FFHandball competitions with optional query, season URL, competition type, and limit filters.",
+      inputSchema: {
+        query: z.string().min(1).optional(),
+        seasonUrl: z.string().min(1).optional(),
+        competitionType: z.string().min(1).optional(),
+        limit: z.number().int().min(COMPETITION_SEARCH_LIMIT_MIN).max(COMPETITION_SEARCH_LIMIT_MAX).default(10),
+      },
+    },
+    async ({ query, seasonUrl, competitionType, limit }) => {
+      const output = await dependencies.client.searchCompetitions({
+        query,
+        seasonUrl,
+        competitionType,
+        limit,
+      });
+
+      return {
+        content: [{ type: "text", text: jsonText(output) }],
+        structuredContent: output,
+      };
+    },
+  );
+
   server.registerTool(
     "ffhb_fetch_page",
     {
