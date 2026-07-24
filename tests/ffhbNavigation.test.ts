@@ -4,11 +4,14 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createUrlPolicy } from "../src/domain/urlPolicy.js";
 import { FfhbClient } from "../src/ffhb/client.js";
-import { parseCompetitionNavigation } from "../src/ffhb/navigationParser.js";
+import { parseCompetitionDetails, parseCompetitionNavigation } from "../src/ffhb/navigationParser.js";
 
 const baseUrl = new URL("https://www.ffhandball.fr");
 const seasonUrl = new URL("https://www.ffhandball.fr/competitions/saison-2026-2027-22/");
 const nationalUrl = new URL("https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/");
+const competitionUrl = new URL(
+  "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/",
+);
 
 test("parses seasons with canonical URLs and available competition types", async () => {
   const html = await fixture("ffhb-season.html");
@@ -167,6 +170,141 @@ test("client rejects competition types not exposed by the season page", async ()
         }),
       /Competition type is not available/,
     );
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("parses competition metadata and exposes phases as navigation items", async () => {
+  const html = await fixture("ffhb-competition.html");
+
+  const details = parseCompetitionDetails(html, competitionUrl);
+
+  assert.deepEqual(details.competition, {
+    id: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/",
+    label: "LIGUE BUTAGAZ ENERGIE 2026-2027",
+    url: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/",
+    parentUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/",
+    seasonUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/",
+    competitionType: "NATIONAL",
+    externalId: "30618",
+  });
+  assert.deepEqual(details.phases, [
+    {
+      id: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109535/",
+      label: "LIGUE BUTAGAZ ENERGIE",
+      url: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109535/",
+      parentUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/",
+      externalId: "109535",
+      internalId: "85807",
+    },
+    {
+      id: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109536/",
+      label: "PLAYOFFS",
+      url: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109536/",
+      parentUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/",
+      externalId: "109536",
+      internalId: "85808",
+    },
+  ]);
+});
+
+test("parses poules with stable canonical IDs and parent phase relationships", async () => {
+  const html = await fixture("ffhb-competition.html");
+
+  const details = parseCompetitionDetails(html, competitionUrl);
+
+  assert.deepEqual(details.poules, [
+    {
+      id: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/",
+      label: "PHASE REGULIERE",
+      url: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/",
+      parentUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109535/",
+      phaseUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109535/",
+      externalId: "190313",
+      internalId: "238789",
+    },
+    {
+      id: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190314/",
+      label: "PLAYOFFS",
+      url: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190314/",
+      parentUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109536/",
+      phaseUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109536/",
+      externalId: "190314",
+      internalId: "238790",
+    },
+  ]);
+});
+
+test("does not invent phase URLs when a poule references an unknown phase", async () => {
+  const html = (await fixture("ffhb-competition.html")).replace(
+    `&quot;phaseId&quot;:&quot;85808&quot;,&quot;libelle&quot;:&quot;PLAYOFFS&quot;`,
+    `&quot;phaseId&quot;:&quot;99999&quot;,&quot;libelle&quot;:&quot;PLAYOFFS&quot;`,
+  );
+
+  const details = parseCompetitionDetails(html, competitionUrl);
+  const playoffs = details.poules.find((poule) => poule.label === "PLAYOFFS");
+
+  assert.equal(playoffs?.parentUrl, competitionUrl.href);
+  assert.equal(playoffs?.phaseUrl, undefined);
+  assert.match(details.warnings.join("\n"), /PLAYOFFS referenced an unknown phase: 99999/);
+});
+
+test("parses partial competition details with usable metadata and warnings", async () => {
+  const html = await fixture("ffhb-competition-partial.html");
+
+  const details = parseCompetitionDetails(html, competitionUrl);
+
+  assert.equal(details.competition.label, "LIGUE BUTAGAZ ENERGIE 2026-2027");
+  assert.deepEqual(details.phases, []);
+  assert.deepEqual(details.poules, []);
+  assert.match(details.warnings.join("\n"), /Unable to parse competitions---poule-selector attributes/);
+  assert.match(details.warnings.join("\n"), /No phases/);
+  assert.match(details.warnings.join("\n"), /No poules/);
+});
+
+test("client gets competition metadata from a canonical competition URL", async () => {
+  const responses = new Map([
+    [competitionUrl.href, await fixture("ffhb-competition.html")],
+  ]);
+  const restoreFetch = stubFetch(responses);
+  const client = new FfhbClient({
+    userAgent: "ffhb-mcp-test",
+    requestTimeoutMs: 1000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+
+  try {
+    const result = await client.getCompetition(competitionUrl.href);
+
+    assert.equal(result.competition.label, "LIGUE BUTAGAZ ENERGIE 2026-2027");
+    assert.deepEqual(result.phases.map((phase) => phase.label), ["LIGUE BUTAGAZ ENERGIE", "PLAYOFFS"]);
+    assert.equal(Object.hasOwn(result, "poules"), false);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("client lists all poules or filters them by selected phase URL", async () => {
+  const phaseUrl =
+    "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/phase-109536/";
+  const responses = new Map([
+    [competitionUrl.href, await fixture("ffhb-competition.html")],
+  ]);
+  const restoreFetch = stubFetch(responses);
+  const client = new FfhbClient({
+    userAgent: "ffhb-mcp-test",
+    requestTimeoutMs: 1000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+
+  try {
+    const allPoules = await client.listPoules({ competitionUrl: competitionUrl.href });
+    const filteredPoules = await client.listPoules({ competitionUrl: competitionUrl.href, phaseUrl });
+
+    assert.deepEqual(allPoules.poules.map((poule) => poule.label), ["PHASE REGULIERE", "PLAYOFFS"]);
+    assert.deepEqual(filteredPoules.poules.map((poule) => poule.label), ["PLAYOFFS"]);
+    assert.equal(filteredPoules.filters.phaseUrl, phaseUrl);
   } finally {
     restoreFetch();
   }

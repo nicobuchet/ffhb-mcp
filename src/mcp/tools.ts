@@ -58,6 +58,47 @@ export function registerTools(server: McpServer, dependencies: ToolDependencies)
   );
 
   server.registerTool(
+    "ffhb_get_competition",
+    {
+      title: "Get FFHandball competition",
+      description: "Inspect one FFHandball competition and list its metadata plus available phases.",
+      inputSchema: {
+        competitionUrl: z.string().min(1).describe("Canonical FFHandball competition URL."),
+      },
+    },
+    async ({ competitionUrl }) => {
+      const details = await dependencies.client.getCompetition(competitionUrl);
+      const output: Record<string, unknown> = { ...details };
+
+      return {
+        content: [{ type: "text", text: jsonText(output) }],
+        structuredContent: output,
+      };
+    },
+  );
+
+  server.registerTool(
+    "ffhb_list_poules",
+    {
+      title: "List FFHandball poules",
+      description: "List poules for a competition, optionally restricted to one phase URL from ffhb_get_competition.",
+      inputSchema: {
+        competitionUrl: z.string().min(1).describe("Canonical FFHandball competition URL."),
+        phaseUrl: z.string().min(1).optional().describe("Optional phase URL returned by ffhb_get_competition."),
+      },
+    },
+    async ({ competitionUrl, phaseUrl }) => {
+      const result = await dependencies.client.listPoules({ competitionUrl, phaseUrl });
+      const output: Record<string, unknown> = { ...result };
+
+      return {
+        content: [{ type: "text", text: jsonText(output) }],
+        structuredContent: output,
+      };
+    },
+  );
+
+  server.registerTool(
     "ffhb_fetch_page",
     {
       title: "Fetch FFHandball page",
