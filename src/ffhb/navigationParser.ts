@@ -5,6 +5,10 @@ import type {
   CompetitionNavigation,
   CompetitionPhase,
   CompetitionSearchResult,
+  JourneeNavigationItem,
+  MatchNavigationItem,
+  MatchResult,
+  MatchTeam,
   NavigationItem,
   PouleNavigationItem,
   SeasonNavigationItem,
@@ -19,6 +23,8 @@ const COMPETITION_COMPONENT_NAMES = new Set([
 const COMPETITION_DETAILS_COMPONENT_NAMES = new Set([
   "page-header",
   "competitions---poule-selector",
+  "competitions---journee-selector",
+  "competitions---rencontre-list",
 ]);
 
 const COMPETITION_TYPE_LABELS = new Map<string, string>([
@@ -80,6 +86,8 @@ export function parseCompetitionDetails(html: string, pageUrl: URL): Competition
 
   const phases = buildPhaseItems(findFirstRecordArray(componentData, "phases"), competition.url);
   const poules = buildPouleItems(findFirstRecordArray(componentData, "poules"), phases, competition.url, warnings);
+  const journees = buildJourneeItems(componentData, poules, pageUrl, warnings);
+  const matches = buildMatchItems(componentData, poules, journees, pageUrl, warnings);
 
   if (phases.length === 0) {
     warnings.push("No phases were embedded in the FFHandball competition components.");
@@ -93,6 +101,8 @@ export function parseCompetitionDetails(html: string, pageUrl: URL): Competition
     competition,
     phases,
     poules,
+    journees,
+    matches,
     warnings,
   };
 }
@@ -342,6 +352,216 @@ function buildPouleItems(
   return poules;
 }
 
+function buildJourneeItems(
+  componentData: unknown[],
+  poules: PouleNavigationItem[],
+  pageUrl: URL,
+  warnings: string[],
+): JourneeNavigationItem[] {
+  const journees: JourneeNavigationItem[] = [];
+  const seen = new Set<string>();
+  const inferredPouleUrl = inferPouleUrl(pageUrl);
+
+  for (const rawPoule of collectRawPouleCandidates(componentData)) {
+    const poule = findPouleForEmbeddedRecord(poules, rawPoule, inferredPouleUrl);
+    if (!poule) {
+      continue;
+    }
+
+    for (const rawJournee of parseJourneeRows(rawPoule, poule.label, warnings)) {
+      const numero = numberValue(rawJournee.journee_numero);
+      if (numero === null) {
+        continue;
+      }
+
+      const url = journeeUrl(poule.url, numero);
+      if (seen.has(url)) {
+        continue;
+      }
+
+      seen.add(url);
+      journees.push({
+        id: url,
+        label: `Journee ${numero}`,
+        url,
+        parentUrl: poule.url,
+        pouleUrl: poule.url,
+        numero,
+        ...(stringValue(rawJournee.date_debut) ? { startsOn: stringValue(rawJournee.date_debut) } : {}),
+        ...(stringValue(rawJournee.date_fin) ? { endsOn: stringValue(rawJournee.date_fin) } : {}),
+      });
+    }
+  }
+
+  return journees.sort((left, right) => left.numero - right.numero);
+}
+
+function buildMatchItems(
+  componentData: unknown[],
+  poules: PouleNavigationItem[],
+  journees: JourneeNavigationItem[],
+  pageUrl: URL,
+  warnings: string[],
+): MatchNavigationItem[] {
+  const matches: MatchNavigationItem[] = [];
+  const seen = new Set<string>();
+  const inferredPouleUrl = inferPouleUrl(pageUrl);
+
+  for (const rawMatch of findFirstRecordArray(componentData, "rencontres")) {
+    const externalId = stringValue(rawMatch.ext_rencontreId) || stringValue(rawMatch.id);
+    const homeLabel = stringValue(rawMatch.equipe1Libelle);
+    const awayLabel = stringValue(rawMatch.equipe2Libelle);
+    if (!externalId || !homeLabel || !awayLabel) {
+      warnings.push("A match row was missing its identifier or participant labels.");
+      continue;
+    }
+
+    const poule = findPouleForEmbeddedRecord(poules, rawMatch, inferredPouleUrl);
+    if (!poule) {
+      warnings.push(`Match ${externalId} referenced a poule that could not be resolved.`);
+      continue;
+    }
+
+    const journeeNumero = numberValue(rawMatch.journeeNumero);
+    const canonicalJourneeUrl = journeeNumero ? journeeUrl(poule.url, journeeNumero) : null;
+    const matchJournee = journeeNumero
+      ? journees.find((candidate) => candidate.pouleUrl === poule.url && candidate.numero === journeeNumero)
+      : undefined;
+    const parentUrl = matchJournee?.url ?? canonicalJourneeUrl ?? poule.url;
+    const url = rencontreUrl(poule.url, externalId);
+    if (seen.has(url)) {
+      continue;
+    }
+
+    seen.add(url);
+    matches.push({
+      id: url,
+      label: `${homeLabel} vs ${awayLabel}`,
+      url,
+      parentUrl,
+      pouleUrl: poule.url,
+      ...(canonicalJourneeUrl ? { journeeUrl: canonicalJourneeUrl } : {}),
+      externalId,
+      internalId: stringValue(rawMatch.id) || undefined,
+      ...(journeeNumero !== null ? { journeeNumero } : {}),
+      scheduledAt: stringValue(rawMatch.date) || null,
+      homeTeam: buildTeam(stringValue(rawMatch.equipe1Id), homeLabel),
+      awayTeam: buildTeam(stringValue(rawMatch.equipe2Id), awayLabel),
+      result: buildMatchResult(rawMatch),
+      fdmCode: stringValue(rawMatch.fdmCode) || undefined,
+      venueId: stringValue(rawMatch.equipementId) || undefined,
+      referees: buildReferees(rawMatch),
+    });
+  }
+
+  return matches;
+}
+
+function collectRawPouleCandidates(componentData: unknown[]): Record<string, unknown>[] {
+  const candidates: Record<string, unknown>[] = [];
+
+  for (const component of componentData) {
+    if (!isRecord(component)) {
+      continue;
+    }
+
+    if (isRecord(component.poule)) {
+      candidates.push(component.poule);
+    }
+
+    if (isRecord(component.selected_poule)) {
+      candidates.push(component.selected_poule);
+    }
+  }
+
+  candidates.push(...findFirstRecordArray(componentData, "poules"));
+  return candidates;
+}
+
+function findPouleForEmbeddedRecord(
+  poules: PouleNavigationItem[],
+  record: Record<string, unknown>,
+  inferredPouleUrl: string | null,
+): PouleNavigationItem | null {
+  const externalId = stringValue(record.ext_pouleId) || stringValue(record.extPouleId);
+  const internalId = stringValue(record.id) || stringValue(record.pouleId);
+
+  if (externalId || internalId) {
+    return (
+      poules.find(
+        (candidate) =>
+          (externalId && candidate.externalId === externalId) || (internalId && candidate.internalId === internalId),
+      ) ?? null
+    );
+  }
+
+  return (
+    poules.find((candidate) => inferredPouleUrl !== null && candidate.url === inferredPouleUrl) ?? null
+  );
+}
+
+function parseJourneeRows(
+  rawPoule: Record<string, unknown>,
+  pouleLabel: string,
+  warnings: string[],
+): Record<string, unknown>[] {
+  const rawJournees = stringValue(rawPoule.journees);
+  if (!rawJournees) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawJournees);
+    if (!Array.isArray(parsed)) {
+      warnings.push(`Unable to parse ${pouleLabel} journees: expected an array.`);
+      return [];
+    }
+
+    return parsed.filter(isRecord);
+  } catch (error) {
+    warnings.push(`Unable to parse ${pouleLabel} journees: ${errorMessage(error)}`);
+    return [];
+  }
+}
+
+function buildTeam(id: string, label: string): MatchTeam {
+  return {
+    ...(id ? { id } : {}),
+    label,
+  };
+}
+
+function buildReferees(rawMatch: Record<string, unknown>): MatchTeam[] {
+  const referees: MatchTeam[] = [];
+  const referee1 = stringValue(rawMatch.arbitre1);
+  const referee2 = stringValue(rawMatch.arbitre2);
+
+  if (referee1) {
+    referees.push(buildTeam(stringValue(rawMatch.arbitre1Id), referee1));
+  }
+
+  if (referee2) {
+    referees.push(buildTeam(stringValue(rawMatch.arbitre2Id), referee2));
+  }
+
+  return referees;
+}
+
+function buildMatchResult(rawMatch: Record<string, unknown>): MatchResult | null {
+  const homeScore = numberValue(rawMatch.equipe1Score);
+  const awayScore = numberValue(rawMatch.equipe2Score);
+  if (homeScore === null || awayScore === null) {
+    return null;
+  }
+
+  return {
+    homeScore,
+    awayScore,
+    homeHalfTimeScore: numberValue(rawMatch.equipe1ScoreMT),
+    awayHalfTimeScore: numberValue(rawMatch.equipe2ScoreMT),
+  };
+}
+
 function findCompetitionBreadcrumb(
   component: Record<string, unknown> | undefined,
   pageUrl: URL,
@@ -369,6 +589,20 @@ function findCompetitionBreadcrumb(
 
 function inferCompetitionUrl(pageUrl: URL): string | null {
   const match = pageUrl.pathname.match(/^(\/competitions\/saison-\d{4}-\d{4}-\d+\/[^/]+\/[^/]+-\d+\/)/);
+  if (!match) {
+    return null;
+  }
+
+  return new URL(match[1], pageUrl).href;
+}
+
+function inferPouleUrl(pageUrl: URL): string | null {
+  const competitionUrl = inferCompetitionUrl(pageUrl);
+  if (!competitionUrl) {
+    return null;
+  }
+
+  const match = pageUrl.pathname.match(/^(\/competitions\/saison-\d{4}-\d{4}-\d+\/[^/]+\/[^/]+-\d+\/poule-\d+\/)/);
   if (!match) {
     return null;
   }
@@ -407,6 +641,14 @@ function phaseUrl(competitionUrl: string, externalId: string): string {
 
 function pouleUrl(competitionUrl: string, externalId: string): string {
   return new URL(`poule-${externalId}/`, competitionUrl).href;
+}
+
+function journeeUrl(pouleUrl: string, numero: number): string {
+  return new URL(`journee-${numero}/`, pouleUrl).href;
+}
+
+function rencontreUrl(pouleUrl: string, externalId: string): string {
+  return new URL(`rencontre-${externalId}/`, pouleUrl).href;
 }
 
 function titleFromCompetitionUrl(url: string | null): string {
@@ -500,6 +742,19 @@ function seasonStartYear(label: string): number {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

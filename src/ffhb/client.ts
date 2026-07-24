@@ -9,6 +9,9 @@ import {
   type CompetitionOverview,
   type CompetitionSearchFilters,
   type CompetitionSearchResult,
+  type JourneeNavigationItem,
+  type MatchListFilters,
+  type MatchNavigationItem,
   type PouleListFilters,
   type PouleNavigationItem,
   type SeasonNavigationItem,
@@ -177,6 +180,98 @@ export class FfhbClient {
       },
       poules: phaseUrl === null ? details.poules : details.poules.filter((poule) => poule.phaseUrl === phaseUrl),
       warnings: details.warnings,
+    };
+  }
+
+  async listJournees(pouleUrl: string): Promise<{
+    competition: CompetitionDetails["competition"];
+    poule: PouleNavigationItem;
+    filters: {
+      pouleUrl: string;
+    };
+    journees: JourneeNavigationItem[];
+    warnings: string[];
+  }> {
+    const { resolvedPouleUrl, details, poule } = await this.fetchPouleDetails(pouleUrl);
+    const journees = details.journees.filter((journee) => journee.pouleUrl === resolvedPouleUrl);
+
+    const warnings = [...details.warnings];
+    if (journees.length === 0) {
+      warnings.push(`No journees were embedded at ${resolvedPouleUrl}`);
+    }
+
+    return {
+      competition: details.competition,
+      poule,
+      filters: {
+        pouleUrl: resolvedPouleUrl,
+      },
+      journees,
+      warnings,
+    };
+  }
+
+  async listMatches(filters: MatchListFilters): Promise<{
+    competition: CompetitionDetails["competition"];
+    poule: PouleNavigationItem;
+    filters: {
+      pouleUrl: string;
+      journeeUrl: string | null;
+    };
+    matches: MatchNavigationItem[];
+    warnings: string[];
+  }> {
+    const { resolvedPouleUrl, details: pouleDetails, poule } = await this.fetchPouleDetails(filters.pouleUrl);
+    const journees = pouleDetails.journees.filter((journee) => journee.pouleUrl === resolvedPouleUrl);
+
+    const journeeUrl = filters.journeeUrl ? resolveAllowedUrl(filters.journeeUrl, this.options.urlPolicy).href : null;
+    if (journeeUrl !== null && !journees.some((journee) => journee.url === journeeUrl)) {
+      throw new Error(`Journee is not available for ${resolvedPouleUrl}: ${journeeUrl}`);
+    }
+
+    const warnings = [...pouleDetails.warnings];
+    const detailsToSearch =
+      journeeUrl !== null
+        ? [await this.fetchCompetitionDetails(journeeUrl)]
+        : await Promise.all(journees.map((journee) => this.fetchCompetitionDetails(journee.url)));
+    const matches = detailsToSearch.flatMap((details) => {
+      warnings.push(...details.warnings);
+      return details.matches;
+    });
+
+    if (matches.length === 0) {
+      warnings.push(`No matches were embedded for ${journeeUrl ?? resolvedPouleUrl}`);
+    }
+
+    return {
+      competition: pouleDetails.competition,
+      poule,
+      filters: {
+        pouleUrl: resolvedPouleUrl,
+        journeeUrl,
+      },
+      matches,
+      warnings,
+    };
+  }
+
+  private async fetchPouleDetails(inputUrl: string): Promise<{
+    resolvedPouleUrl: string;
+    details: CompetitionDetails;
+    poule: PouleNavigationItem;
+  }> {
+    const resolvedPouleUrl = resolveAllowedUrl(inputUrl, this.options.urlPolicy).href;
+    const details = await this.fetchCompetitionDetails(resolvedPouleUrl);
+    const poule = details.poules.find((candidate) => candidate.url === resolvedPouleUrl);
+
+    if (!poule) {
+      throw new Error(`Poule is not available for ${details.competition.url}: ${resolvedPouleUrl}`);
+    }
+
+    return {
+      resolvedPouleUrl,
+      details,
+      poule,
     };
   }
 

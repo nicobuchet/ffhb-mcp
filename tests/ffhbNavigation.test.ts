@@ -12,6 +12,8 @@ const nationalUrl = new URL("https://www.ffhandball.fr/competitions/saison-2026-
 const competitionUrl = new URL(
   "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/",
 );
+const pouleUrl = new URL(`${competitionUrl.href}poule-190313/`);
+const journeeUrl = new URL(`${pouleUrl.href}journee-1/`);
 
 test("parses seasons with canonical URLs and available competition types", async () => {
   const html = await fixture("ffhb-season.html");
@@ -309,6 +311,180 @@ test("client lists all poules or filters them by selected phase URL", async () =
     restoreFetch();
   }
 });
+
+test("parses poule journees with stable canonical IDs and parent relationships", async () => {
+  const html = await fixture("ffhb-poule.html");
+
+  const details = parseCompetitionDetails(html, pouleUrl);
+
+  assert.deepEqual(details.journees, [
+    {
+      id: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/journee-1/",
+      label: "Journee 1",
+      url: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/journee-1/",
+      parentUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/",
+      pouleUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/",
+      numero: 1,
+      startsOn: "2026-08-29",
+      endsOn: "2026-08-30",
+    },
+    {
+      id: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/journee-2/",
+      label: "Journee 2",
+      url: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/journee-2/",
+      parentUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/",
+      pouleUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/",
+      numero: 2,
+      startsOn: "2026-09-02",
+      endsOn: "2026-09-04",
+    },
+  ]);
+});
+
+test("parses matches with schedule, participants, result metadata, and canonical relationships", async () => {
+  const html = await fixture("ffhb-journee.html");
+
+  const details = parseCompetitionDetails(html, journeeUrl);
+
+  assert.deepEqual(details.matches[0], {
+    id: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/rencontre-2625116/",
+    label: "BREST BRETAGNE HANDBALL vs ES BESANCON FEMININ",
+    url: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/rencontre-2625116/",
+    parentUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/journee-1/",
+    pouleUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/",
+    journeeUrl: "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/poule-190313/journee-1/",
+    externalId: "2625116",
+    internalId: "2847929",
+    journeeNumero: 1,
+    scheduledAt: "2026-08-29T20:00:00+02:00",
+    homeTeam: {
+      id: "1764834",
+      label: "BREST BRETAGNE HANDBALL",
+    },
+    awayTeam: {
+      id: "1764833",
+      label: "ES BESANCON FEMININ",
+    },
+    result: {
+      homeScore: 27,
+      awayScore: 24,
+      homeHalfTimeScore: 12,
+      awayHalfTimeScore: 10,
+    },
+    fdmCode: "WAGQTMC",
+    venueId: "2348",
+    referees: [
+      { id: "9001", label: "A. Referee" },
+      { id: "9002", label: "B. Referee" },
+    ],
+  });
+  assert.deepEqual(details.matches[1]?.result, null);
+  assert.deepEqual(details.matches[1]?.scheduledAt, null);
+});
+
+test("parses partial poule pages with usable navigation and warnings", async () => {
+  const html = await fixture("ffhb-poule-partial.html");
+
+  const details = parseCompetitionDetails(html, pouleUrl);
+
+  assert.equal(details.competition.label, "LIGUE BUTAGAZ ENERGIE 2026-2027");
+  assert.deepEqual(details.poules.map((poule) => poule.label), ["PHASE REGULIERE"]);
+  assert.deepEqual(details.journees, []);
+  assert.deepEqual(details.matches, []);
+  assert.match(details.warnings.join("\n"), /Unable to parse PHASE REGULIERE journees/);
+  assert.match(details.warnings.join("\n"), /Unable to parse competitions---rencontre-list attributes/);
+});
+
+test("warns when an embedded match row is too incomplete to expose", async () => {
+  const html = (await fixture("ffhb-journee.html")).replace(
+    `&quot;equipe1Libelle&quot;:&quot;BREST BRETAGNE HANDBALL&quot;`,
+    `&quot;equipe1Libelle&quot;:&quot;&quot;`,
+  );
+
+  const details = parseCompetitionDetails(html, journeeUrl);
+
+  assert.deepEqual(details.matches.map((match) => match.externalId), ["2625117"]);
+  assert.match(details.warnings.join("\n"), /A match row was missing its identifier or participant labels/);
+});
+
+test("uses journee numero as the match parent relationship when journee parsing is partial", async () => {
+  const html = (await fixture("ffhb-journee.html")).replace(/&quot;journees&quot;:&quot;.*?]&quot;/g, `&quot;journees&quot;:&quot;not-json&quot;`);
+
+  const details = parseCompetitionDetails(html, journeeUrl);
+
+  assert.equal(details.journees.length, 0);
+  assert.equal(details.matches[0]?.parentUrl, journeeUrl.href);
+  assert.equal(details.matches[0]?.journeeUrl, journeeUrl.href);
+});
+
+test("client lists poule journees and filters matches by selected journee URL", async () => {
+  const responses = new Map([
+    [pouleUrl.href, await fixture("ffhb-poule.html")],
+    [journeeUrl.href, await fixture("ffhb-journee.html")],
+  ]);
+  const restoreFetch = stubFetch(responses);
+  const client = new FfhbClient({
+    userAgent: "ffhb-mcp-test",
+    requestTimeoutMs: 1000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+
+  try {
+    const journees = await client.listJournees(pouleUrl.href);
+    const matches = await client.listMatches({ pouleUrl: pouleUrl.href, journeeUrl: journeeUrl.href });
+
+    assert.deepEqual(journees.journees.map((journee) => journee.label), ["Journee 1", "Journee 2"]);
+    assert.equal(journees.filters.pouleUrl, pouleUrl.href);
+    assert.deepEqual(matches.matches.map((match) => match.externalId), ["2625116", "2625117"]);
+    assert.equal(matches.filters.journeeUrl, journeeUrl.href);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("client lists only journees that belong to the requested poule", async () => {
+  const otherPouleUrl = new URL(`${competitionUrl.href}poule-190314/`).href;
+  const html = (await fixture("ffhb-poule.html")).replace(
+    `]}"></smartfire-component>
+    <smartfire-component name='competitions---journee-selector'`,
+    `,{&quot;id&quot;:&quot;238790&quot;,&quot;ext_pouleId&quot;:&quot;190314&quot;,&quot;phaseId&quot;:&quot;85807&quot;,&quot;libelle&quot;:&quot;OTHER POULE&quot;,&quot;journees&quot;:&quot;[{\\&quot;journee_numero\\&quot;:99,\\&quot;date_debut\\&quot;:\\&quot;2027-05-01\\&quot;,\\&quot;date_fin\\&quot;:\\&quot;2027-05-01\\&quot;}]&quot;}]}"></smartfire-component>
+    <smartfire-component name='competitions---journee-selector'`,
+  );
+  const responses = new Map([[pouleUrl.href, html]]);
+  const restoreFetch = stubFetch(responses);
+  const client = new FfhbClient({
+    userAgent: "ffhb-mcp-test",
+    requestTimeoutMs: 1000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+
+  try {
+    const journees = await client.listJournees(pouleUrl.href);
+
+    assert.equal(otherPouleUrl.endsWith("/poule-190314/"), true);
+    assert.deepEqual(journees.journees.map((journee) => journee.numero), [1, 2]);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test(
+  "live smoke: FFHandball poule exposes journees and matches",
+  { skip: !process.env.FFHB_LIVE_SMOKE },
+  async () => {
+    const client = new FfhbClient({
+      userAgent: "ffhb-mcp-live-smoke",
+      requestTimeoutMs: 10000,
+      urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+    });
+
+    const journees = await client.listJournees(pouleUrl.href);
+    const matches = await client.listMatches({ pouleUrl: pouleUrl.href, journeeUrl: journeeUrl.href });
+
+    assert.ok(journees.journees.length > 0);
+    assert.ok(matches.matches.length > 0);
+  },
+);
 
 async function fixture(name: string): Promise<string> {
   return readFile(join(process.cwd(), "tests", "fixtures", name), "utf8");
