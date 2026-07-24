@@ -99,6 +99,47 @@ export function registerTools(server: McpServer, dependencies: ToolDependencies)
   );
 
   server.registerTool(
+    "ffhb_list_journees",
+    {
+      title: "List FFHandball journees",
+      description: "List journees for a canonical FFHandball poule URL.",
+      inputSchema: {
+        pouleUrl: z.string().min(1).describe("Canonical FFHandball poule URL."),
+      },
+    },
+    async ({ pouleUrl }) => {
+      const result = await dependencies.client.listJournees(pouleUrl);
+      const output: Record<string, unknown> = { ...result };
+
+      return {
+        content: [{ type: "text", text: jsonText(output) }],
+        structuredContent: output,
+      };
+    },
+  );
+
+  server.registerTool(
+    "ffhb_list_matches",
+    {
+      title: "List FFHandball matches",
+      description: "List matches for a poule, optionally restricted to one journee URL from ffhb_list_journees.",
+      inputSchema: {
+        pouleUrl: z.string().min(1).describe("Canonical FFHandball poule URL."),
+        journeeUrl: z.string().min(1).optional().describe("Optional journee URL returned by ffhb_list_journees."),
+      },
+    },
+    async ({ pouleUrl, journeeUrl }) => {
+      const result = await dependencies.client.listMatches({ pouleUrl, journeeUrl });
+      const output: Record<string, unknown> = { ...result };
+
+      return {
+        content: [{ type: "text", text: jsonText(output) }],
+        structuredContent: output,
+      };
+    },
+  );
+
+  server.registerTool(
     "ffhb_fetch_page",
     {
       title: "Fetch FFHandball page",

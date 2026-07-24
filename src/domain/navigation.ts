@@ -48,6 +48,40 @@ export interface PouleNavigationItem extends NavigationItem {
   internalId?: string;
 }
 
+export interface JourneeNavigationItem extends NavigationItem {
+  pouleUrl: string;
+  numero: number;
+  startsOn?: string;
+  endsOn?: string;
+}
+
+export interface MatchTeam {
+  id?: string;
+  label: string;
+}
+
+export interface MatchResult {
+  homeScore: number;
+  awayScore: number;
+  homeHalfTimeScore?: number | null;
+  awayHalfTimeScore?: number | null;
+}
+
+export interface MatchNavigationItem extends NavigationItem {
+  pouleUrl: string;
+  journeeUrl?: string;
+  externalId: string;
+  internalId?: string;
+  journeeNumero?: number;
+  scheduledAt: string | null;
+  homeTeam: MatchTeam;
+  awayTeam: MatchTeam;
+  result: MatchResult | null;
+  fdmCode?: string;
+  venueId?: string;
+  referees: MatchTeam[];
+}
+
 export interface CompetitionOverview {
   competition: CompetitionMetadata;
   phases: CompetitionPhase[];
@@ -58,10 +92,17 @@ export interface CompetitionDetails {
   competition: CompetitionMetadata;
   phases: CompetitionPhase[];
   poules: PouleNavigationItem[];
+  journees: JourneeNavigationItem[];
+  matches: MatchNavigationItem[];
   warnings: string[];
 }
 
 export interface PouleListFilters {
   competitionUrl: string;
   phaseUrl?: string;
+}
+
+export interface MatchListFilters {
+  pouleUrl: string;
+  journeeUrl?: string;
 }
