@@ -30,3 +30,38 @@ export interface CompetitionNavigation {
   competitions: CompetitionSearchResult[];
   warnings: string[];
 }
+
+export interface CompetitionMetadata extends NavigationItem {
+  seasonUrl: string;
+  competitionType: string;
+  externalId: string;
+}
+
+export interface CompetitionPhase extends NavigationItem {
+  externalId: string;
+  internalId?: string;
+}
+
+export interface PouleNavigationItem extends NavigationItem {
+  phaseUrl?: string;
+  externalId: string;
+  internalId?: string;
+}
+
+export interface CompetitionOverview {
+  competition: CompetitionMetadata;
+  phases: CompetitionPhase[];
+  warnings: string[];
+}
+
+export interface CompetitionDetails {
+  competition: CompetitionMetadata;
+  phases: CompetitionPhase[];
+  poules: PouleNavigationItem[];
+  warnings: string[];
+}
+
+export interface PouleListFilters {
+  competitionUrl: string;
+  phaseUrl?: string;
+}

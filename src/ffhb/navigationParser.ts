@@ -1,8 +1,12 @@
 import * as cheerio from "cheerio";
 import type {
+  CompetitionDetails,
+  CompetitionMetadata,
   CompetitionNavigation,
+  CompetitionPhase,
   CompetitionSearchResult,
   NavigationItem,
+  PouleNavigationItem,
   SeasonNavigationItem,
 } from "../domain/navigation.js";
 
@@ -10,6 +14,11 @@ const COMPETITION_COMPONENT_NAMES = new Set([
   "competitions---search-bar",
   "competitions---saison-selector",
   "competitions---competition-main-menu",
+]);
+
+const COMPETITION_DETAILS_COMPONENT_NAMES = new Set([
+  "page-header",
+  "competitions---poule-selector",
 ]);
 
 const COMPETITION_TYPE_LABELS = new Map<string, string>([
@@ -20,27 +29,8 @@ const COMPETITION_TYPE_LABELS = new Map<string, string>([
 ]);
 
 export function parseCompetitionNavigation(html: string, pageUrl: URL): CompetitionNavigation {
-  const $ = cheerio.load(html);
   const warnings: string[] = [];
-  const componentData: unknown[] = [];
-
-  $("smartfire-component").each((_, element) => {
-    const name = $(element).attr("name");
-    if (!name || !COMPETITION_COMPONENT_NAMES.has(name)) {
-      return;
-    }
-
-    const attributes = $(element).attr("attributes");
-    if (!attributes) {
-      warnings.push(`Component ${name} did not include attributes.`);
-      return;
-    }
-
-    const parsed = parseComponentAttributes(attributes, name, warnings);
-    if (parsed) {
-      componentData.push(parsed);
-    }
-  });
+  const componentData = collectComponentData(html, COMPETITION_COMPONENT_NAMES, warnings);
 
   if (componentData.length === 0) {
     throw new Error(`Unable to interpret FFHandball competition navigation from ${pageUrl.href}`);
@@ -75,6 +65,38 @@ export function parseCompetitionNavigation(html: string, pageUrl: URL): Competit
   };
 }
 
+export function parseCompetitionDetails(html: string, pageUrl: URL): CompetitionDetails {
+  const warnings: string[] = [];
+  const componentData = collectComponentData(html, COMPETITION_DETAILS_COMPONENT_NAMES, warnings);
+
+  if (componentData.length === 0) {
+    throw new Error(`Unable to interpret FFHandball competition details from ${pageUrl.href}`);
+  }
+
+  const competition = buildCompetitionMetadata(componentData, pageUrl);
+  if (!competition) {
+    throw new Error(`Unable to interpret FFHandball competition details from ${pageUrl.href}`);
+  }
+
+  const phases = buildPhaseItems(findFirstRecordArray(componentData, "phases"), competition.url);
+  const poules = buildPouleItems(findFirstRecordArray(componentData, "poules"), phases, competition.url, warnings);
+
+  if (phases.length === 0) {
+    warnings.push("No phases were embedded in the FFHandball competition components.");
+  }
+
+  if (poules.length === 0) {
+    warnings.push("No poules were embedded in the FFHandball competition components.");
+  }
+
+  return {
+    competition,
+    phases,
+    poules,
+    warnings,
+  };
+}
+
 export function competitionTypeSlug(competitionType: string): string {
   const normalized = normalizeCompetitionType(competitionType);
   if (normalized === "COUPE_DE_FRANCE") {
@@ -91,6 +113,31 @@ export function normalizeCompetitionType(competitionType: string): string {
     .replace(/\p{Diacritic}/gu, "")
     .replace(/[-\s]+/g, "_")
     .toUpperCase();
+}
+
+function collectComponentData(html: string, componentNames: Set<string>, warnings: string[]): unknown[] {
+  const $ = cheerio.load(html);
+  const componentData: unknown[] = [];
+
+  $("smartfire-component").each((_, element) => {
+    const name = $(element).attr("name");
+    if (!name || !componentNames.has(name)) {
+      return;
+    }
+
+    const attributes = $(element).attr("attributes");
+    if (!attributes) {
+      warnings.push(`Component ${name} did not include attributes.`);
+      return;
+    }
+
+    const parsed = parseComponentAttributes(attributes, name, warnings);
+    if (parsed) {
+      componentData.push(parsed);
+    }
+  });
+
+  return componentData;
 }
 
 function parseComponentAttributes(attributes: string, componentName: string, warnings: string[]): unknown | null {
@@ -194,6 +241,181 @@ function collectCompetitions(componentData: unknown[], pageUrl: URL): Competitio
   }
 
   return competitions;
+}
+
+function buildCompetitionMetadata(componentData: unknown[], pageUrl: URL): CompetitionMetadata | null {
+  const header = componentData.find(isRecord);
+  const breadcrumb = findCompetitionBreadcrumb(header, pageUrl);
+  const url = breadcrumb?.url ?? inferCompetitionUrl(pageUrl);
+  const label = stringValue(header?.title) || breadcrumb?.label || titleFromCompetitionUrl(url);
+
+  if (!url || !label) {
+    return null;
+  }
+
+  const metadata = competitionUrlMetadata(url);
+  if (!metadata) {
+    return null;
+  }
+
+  return {
+    id: url,
+    label,
+    url,
+    parentUrl: metadata.parentUrl,
+    seasonUrl: metadata.seasonUrl,
+    competitionType: metadata.competitionType,
+    externalId: metadata.externalId,
+  };
+}
+
+function buildPhaseItems(rawPhases: Record<string, unknown>[], competitionUrl: string): CompetitionPhase[] {
+  const phases: CompetitionPhase[] = [];
+  const seen = new Set<string>();
+
+  for (const rawPhase of rawPhases) {
+    const label = stringValue(rawPhase.libelle);
+    const externalId = stringValue(rawPhase.ext_phaseId) || stringValue(rawPhase.id);
+    if (!label || !externalId) {
+      continue;
+    }
+
+    const url = phaseUrl(competitionUrl, externalId);
+    if (seen.has(url)) {
+      continue;
+    }
+
+    seen.add(url);
+    phases.push({
+      id: url,
+      label,
+      url,
+      parentUrl: competitionUrl,
+      externalId,
+      internalId: stringValue(rawPhase.id) || undefined,
+    });
+  }
+
+  return phases;
+}
+
+function buildPouleItems(
+  rawPoules: Record<string, unknown>[],
+  phases: CompetitionPhase[],
+  competitionUrl: string,
+  warnings: string[],
+): PouleNavigationItem[] {
+  const poules: PouleNavigationItem[] = [];
+  const seen = new Set<string>();
+
+  for (const rawPoule of rawPoules) {
+    const label = stringValue(rawPoule.libelle);
+    const externalId = stringValue(rawPoule.ext_pouleId) || stringValue(rawPoule.id);
+    if (!label || !externalId) {
+      continue;
+    }
+
+    const rawPhaseId = stringValue(rawPoule.phaseId);
+    const phase = phases.find((candidate) => candidate.internalId === rawPhaseId);
+    const parentUrl = phase?.url ?? competitionUrl;
+    const url = pouleUrl(competitionUrl, externalId);
+    if (seen.has(url)) {
+      continue;
+    }
+
+    if (!phase && rawPhaseId) {
+      warnings.push(`Poule ${label} referenced an unknown phase: ${rawPhaseId}.`);
+    }
+
+    seen.add(url);
+    poules.push({
+      id: url,
+      label,
+      url,
+      parentUrl,
+      ...(phase ? { phaseUrl: phase.url } : {}),
+      externalId,
+      internalId: stringValue(rawPoule.id) || undefined,
+    });
+  }
+
+  return poules;
+}
+
+function findCompetitionBreadcrumb(
+  component: Record<string, unknown> | undefined,
+  pageUrl: URL,
+): { label: string; url: string } | null {
+  if (!component || !Array.isArray(component.breadcrumb)) {
+    return null;
+  }
+
+  const candidates = component.breadcrumb.filter(isRecord);
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const label = stringValue(candidates[index].label);
+    const rawUrl = stringValue(candidates[index].url);
+    if (!label || !rawUrl) {
+      continue;
+    }
+
+    const url = new URL(rawUrl, pageUrl).href;
+    if (competitionUrlMetadata(url)) {
+      return { label, url };
+    }
+  }
+
+  return null;
+}
+
+function inferCompetitionUrl(pageUrl: URL): string | null {
+  const match = pageUrl.pathname.match(/^(\/competitions\/saison-\d{4}-\d{4}-\d+\/[^/]+\/[^/]+-\d+\/)/);
+  if (!match) {
+    return null;
+  }
+
+  return new URL(match[1], pageUrl).href;
+}
+
+function competitionUrlMetadata(url: string): {
+  seasonUrl: string;
+  parentUrl: string;
+  competitionType: string;
+  externalId: string;
+} | null {
+  const parsed = new URL(url);
+  const match = parsed.pathname.match(
+    /^(\/competitions\/saison-\d{4}-\d{4}-\d+\/)([^/]+)\/([^/]+)-(\d+)\/$/,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const seasonUrl = new URL(match[1], parsed).href;
+  const parentUrl = new URL(`${match[2]}/`, seasonUrl).href;
+
+  return {
+    seasonUrl,
+    parentUrl,
+    competitionType: normalizeCompetitionType(match[2]),
+    externalId: match[4],
+  };
+}
+
+function phaseUrl(competitionUrl: string, externalId: string): string {
+  return new URL(`phase-${externalId}/`, competitionUrl).href;
+}
+
+function pouleUrl(competitionUrl: string, externalId: string): string {
+  return new URL(`poule-${externalId}/`, competitionUrl).href;
+}
+
+function titleFromCompetitionUrl(url: string | null): string {
+  if (!url) {
+    return "";
+  }
+
+  const match = new URL(url).pathname.match(/\/([^/]+)-\d+\/$/);
+  return match ? toTitle(match[1].replace(/-/g, "_")) : "";
 }
 
 function findFirstArray(componentData: unknown[], key: string): unknown[] {

@@ -20,6 +20,8 @@ Tools:
 
 - `ffhb_list_seasons`: list live FFHandball seasons and the competition type URLs available under each one.
 - `ffhb_search_competitions`: search live FFHandball competitions with optional query, season URL, competition type, and limit filters.
+- `ffhb_get_competition`: inspect one competition and expose metadata plus available phase navigation items.
+- `ffhb_list_poules`: list poules for a competition, optionally restricted to a phase URL returned by `ffhb_get_competition`.
 - `ffhb_fetch_page`: fetch and parse a single FFHandball page.
 - `ffhb_index_url`: fetch one page and optionally shallow-index same-site links found on it.
 - `ffhb_search_index`: search the local page index.

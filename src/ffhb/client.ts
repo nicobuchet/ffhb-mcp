@@ -5,11 +5,20 @@ import type { IndexedPage } from "../domain/page.js";
 import {
   COMPETITION_SEARCH_LIMIT_MAX,
   COMPETITION_SEARCH_LIMIT_MIN,
+  type CompetitionDetails,
+  type CompetitionOverview,
   type CompetitionSearchFilters,
   type CompetitionSearchResult,
+  type PouleListFilters,
+  type PouleNavigationItem,
   type SeasonNavigationItem,
 } from "../domain/navigation.js";
-import { competitionTypeSlug, normalizeCompetitionType, parseCompetitionNavigation } from "./navigationParser.js";
+import {
+  competitionTypeSlug,
+  normalizeCompetitionType,
+  parseCompetitionDetails,
+  parseCompetitionNavigation,
+} from "./navigationParser.js";
 
 export interface FfhbClientOptions {
   userAgent: string;
@@ -134,6 +143,43 @@ export class FfhbClient {
     };
   }
 
+  async getCompetition(competitionUrl: string): Promise<CompetitionOverview> {
+    const details = await this.fetchCompetitionDetails(competitionUrl);
+
+    return {
+      competition: details.competition,
+      phases: details.phases,
+      warnings: details.warnings,
+    };
+  }
+
+  async listPoules(filters: PouleListFilters): Promise<{
+    competition: CompetitionDetails["competition"];
+    filters: {
+      competitionUrl: string;
+      phaseUrl: string | null;
+    };
+    poules: PouleNavigationItem[];
+    warnings: string[];
+  }> {
+    const details = await this.fetchCompetitionDetails(filters.competitionUrl);
+    const phaseUrl = filters.phaseUrl ? resolveAllowedUrl(filters.phaseUrl, this.options.urlPolicy).href : null;
+
+    if (phaseUrl !== null && !details.phases.some((phase) => phase.url === phaseUrl)) {
+      throw new Error(`Phase is not available for ${details.competition.url}: ${phaseUrl}`);
+    }
+
+    return {
+      competition: details.competition,
+      filters: {
+        competitionUrl: details.competition.url,
+        phaseUrl,
+      },
+      poules: phaseUrl === null ? details.poules : details.poules.filter((poule) => poule.phaseUrl === phaseUrl),
+      warnings: details.warnings,
+    };
+  }
+
   private async fetch(url: URL): Promise<Response> {
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), this.options.requestTimeoutMs);
@@ -175,6 +221,11 @@ export class FfhbClient {
   private async fetchCompetitionNavigation(inputUrl: string) {
     const { html, url } = await this.fetchHtml(inputUrl);
     return parseCompetitionNavigation(html, url);
+  }
+
+  private async fetchCompetitionDetails(inputUrl: string): Promise<CompetitionDetails> {
+    const { html, url } = await this.fetchHtml(inputUrl);
+    return parseCompetitionDetails(html, url);
   }
 }
 
