@@ -18,6 +18,8 @@ TypeScript MCP server for helping AI agents fetch, index, and search content fro
 
 Tools:
 
+- `ffhb_list_seasons`: list live FFHandball seasons and the competition type URLs available under each one.
+- `ffhb_search_competitions`: search live FFHandball competitions with optional query, season URL, competition type, and limit filters.
 - `ffhb_fetch_page`: fetch and parse a single FFHandball page.
 - `ffhb_index_url`: fetch one page and optionally shallow-index same-site links found on it.
 - `ffhb_search_index`: search the local page index.
