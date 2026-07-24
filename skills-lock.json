@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "skills": {
+    "adversarial-review": {
+      "source": "git@gitlab.com:artificial-lab/agent-skills.git",
+      "sourceUrl": "git@gitlab.com:artificial-lab/agent-skills.git",
+      "sourceType": "git",
+      "skillPath": "skills/adversarial-review/SKILL.md",
+      "computedHash": "cd477bfb701aa5aa7d9d134b74e46e4ee52a5a0664b65c8dace9e08fe063be32"
+    },
+    "babysit-pr": {
+      "source": "git@gitlab.com:artificial-lab/agent-skills.git",
+      "sourceUrl": "git@gitlab.com:artificial-lab/agent-skills.git",
+      "sourceType": "git",
+      "skillPath": "skills/babysit-pr/SKILL.md",
+      "computedHash": "264e83a4d21a8b76dc1f8e21e5b59d02fd348ddfceaa468adbc8fb15fdf45fab"
+    },
+    "cleanup-dead-code": {
+      "source": "git@gitlab.com:artificial-lab/agent-skills.git",
+      "sourceUrl": "git@gitlab.com:artificial-lab/agent-skills.git",
+      "sourceType": "git",
+      "skillPath": "skills/cleanup-dead-code/SKILL.md",
+      "computedHash": "0f2459a7ffff9a035b7af69444a9d8d27e26f19236415a40ef2bd7a74e0d42f9"
+    },
+    "commit-push-pr": {
+      "source": "git@gitlab.com:artificial-lab/agent-skills.git",
+      "sourceUrl": "git@gitlab.com:artificial-lab/agent-skills.git",
+      "sourceType": "git",
+      "skillPath": "skills/commit-push-pr/SKILL.md",
+      "computedHash": "fe38deb70f5d9f3b6b1c1ade4da57097b09534a4e5928ee6a0a04de9e118de04"
+    }
+  }
+}

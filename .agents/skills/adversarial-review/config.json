@@ -1,0 +1,5 @@
+{
+  "max_iterations": 3,
+  "stop_on_severity": "NITPICK",
+  "review_scope": "diff"
+}
