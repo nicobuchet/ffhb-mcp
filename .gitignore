@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+data/index/*.json
+data/cache/*
+!data/cache/.gitkeep
+!data/index/.gitkeep
+.DS_Store
+npm-debug.log*
