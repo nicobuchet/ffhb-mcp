@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createUrlPolicy } from "../src/domain/urlPolicy.js";
 import { FfhbClient } from "../src/ffhb/client.js";
 import { parseCompetitionDetails, parseCompetitionNavigation } from "../src/ffhb/navigationParser.js";
+import { smartfireComponentHtml } from "./helpers.js";
 
 const baseUrl = new URL("https://www.ffhandball.fr");
 const seasonUrl = new URL("https://www.ffhandball.fr/competitions/saison-2026-2027-22/");
@@ -13,6 +14,7 @@ const competitionUrl = new URL(
   "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/",
 );
 const pouleUrl = new URL(`${competitionUrl.href}poule-190313/`);
+const standingsUrl = new URL("classements/", pouleUrl);
 const journeeUrl = new URL(`${pouleUrl.href}journee-1/`);
 
 test("parses seasons with canonical URLs and available competition types", async () => {
@@ -442,6 +444,106 @@ test("client lists poule journees and filters matches by selected journee URL", 
   }
 });
 
+test("client gets standings for a canonical poule URL with competition and poule context", async () => {
+  const responses = new Map([
+    [pouleUrl.href, await fixture("ffhb-poule.html")],
+    [
+      standingsUrl.href,
+      (await fixture("ffhb-poule.html")).replace(
+        "</body>",
+        `${smartfireComponentHtml("competitions---classement", {
+          classements: [
+            {
+              id: "10543916",
+              ext_classementId: "59710893",
+              pouleId: "238789",
+              equipeId: "1764834",
+              ext_equipeId: "2118500",
+              structureId: "532",
+              ext_structureId: "1791",
+              place: "2",
+              point: "38",
+              joue: "22",
+              gagne: "18",
+              nul: "2",
+              perdu: "2",
+              butPlus: "650",
+              butMoins: "540",
+              diff: "110",
+              penalite: "1",
+              equipe_libelle: "BREST BRETAGNE HANDBALL",
+            },
+          ],
+        })}</body>`,
+      ),
+    ],
+  ]);
+  const restoreFetch = stubFetch(responses);
+  const client = new FfhbClient({
+    userAgent: "ffhb-mcp-test",
+    requestTimeoutMs: 1000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+
+  try {
+    const result = await client.getStandings(pouleUrl.href);
+
+    assert.equal(result.competition.label, "LIGUE BUTAGAZ ENERGIE 2026-2027");
+    assert.equal(result.poule.label, "PHASE REGULIERE");
+    assert.deepEqual(result.filters, { pouleUrl: pouleUrl.href });
+    assert.deepEqual(result.standings, [
+      {
+        id: "59710893",
+        internalId: "10543916",
+        pouleId: "238789",
+        rank: 2,
+        team: {
+          id: "1764834",
+          externalId: "2118500",
+          structureId: "532",
+          externalStructureId: "1791",
+          label: "BREST BRETAGNE HANDBALL",
+        },
+        played: 22,
+        points: 38,
+        wins: 18,
+        draws: 2,
+        losses: 2,
+        goalsFor: 650,
+        goalsAgainst: 540,
+        goalDifference: 110,
+        penalties: 1,
+      },
+    ]);
+    assert.deepEqual(result.warnings, []);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("client returns empty standings with a warning when a valid poule page has no standings component", async () => {
+  const responses = new Map([
+    [pouleUrl.href, await fixture("ffhb-poule.html")],
+    [standingsUrl.href, await fixture("ffhb-poule.html")],
+  ]);
+  const restoreFetch = stubFetch(responses);
+  const client = new FfhbClient({
+    userAgent: "ffhb-mcp-test",
+    requestTimeoutMs: 1000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+
+  try {
+    const result = await client.getStandings(pouleUrl.href);
+
+    assert.equal(result.poule.url, pouleUrl.href);
+    assert.deepEqual(result.standings, []);
+    assert.match(result.warnings.join("\n"), /No competitions---classement standings component was embedded/);
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("client lists only journees that belong to the requested poule", async () => {
   const otherPouleUrl = new URL(`${competitionUrl.href}poule-190314/`).href;
   const html = (await fixture("ffhb-poule.html")).replace(
@@ -472,17 +574,43 @@ test(
   "live smoke: FFHandball poule exposes journees and matches",
   { skip: !process.env.FFHB_LIVE_SMOKE },
   async () => {
-    const client = new FfhbClient({
-      userAgent: "ffhb-mcp-live-smoke",
-      requestTimeoutMs: 10000,
-      urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
-    });
+    const client = createLiveSmokeClient();
 
     const journees = await client.listJournees(pouleUrl.href);
     const matches = await client.listMatches({ pouleUrl: pouleUrl.href, journeeUrl: journeeUrl.href });
 
     assert.ok(journees.journees.length > 0);
     assert.ok(matches.matches.length > 0);
+  },
+);
+
+test(
+  "live smoke: FFHandball poule standings payload matches extractor assumptions",
+  { skip: !process.env.FFHB_LIVE_SMOKE },
+  async () => {
+    const client = createLiveSmokeClient();
+
+    const result = await client.getStandings(pouleUrl.href);
+
+    assert.equal(result.filters.pouleUrl, pouleUrl.href);
+    assert.equal(result.poule.url, pouleUrl.href);
+
+    assert.deepEqual(result.warnings, []);
+    assert.ok(result.standings.length > 0);
+    for (const standing of result.standings) {
+      assert.ok(standing.id.length > 0);
+      assert.ok(standing.team.label.length > 0);
+      assert.equal(Number.isInteger(standing.rank), true);
+      assert.equal(isNullableInteger(standing.played), true);
+      assert.equal(isNullableInteger(standing.points), true);
+      assert.equal(isNullableInteger(standing.wins), true);
+      assert.equal(isNullableInteger(standing.draws), true);
+      assert.equal(isNullableInteger(standing.losses), true);
+      assert.equal(isNullableInteger(standing.goalsFor), true);
+      assert.equal(isNullableInteger(standing.goalsAgainst), true);
+      assert.equal(isNullableInteger(standing.goalDifference), true);
+      assert.equal(isNullableInteger(standing.penalties), true);
+    }
   },
 );
 
@@ -514,4 +642,16 @@ function stubFetch(responses: Map<string, string>): () => void {
   return () => {
     globalThis.fetch = originalFetch;
   };
+}
+
+function createLiveSmokeClient(): FfhbClient {
+  return new FfhbClient({
+    userAgent: "ffhb-mcp-live-smoke",
+    requestTimeoutMs: 10000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+}
+
+function isNullableInteger(value: number | null): boolean {
+  return value === null || Number.isInteger(value);
 }

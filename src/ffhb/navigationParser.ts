@@ -1,4 +1,3 @@
-import * as cheerio from "cheerio";
 import type {
   CompetitionDetails,
   CompetitionMetadata,
@@ -13,6 +12,8 @@ import type {
   PouleNavigationItem,
   SeasonNavigationItem,
 } from "../domain/navigation.js";
+import { errorMessage } from "./errors.js";
+import { collectComponentData } from "./smartfireComponents.js";
 
 const COMPETITION_COMPONENT_NAMES = new Set([
   "competitions---search-bar",
@@ -123,40 +124,6 @@ export function normalizeCompetitionType(competitionType: string): string {
     .replace(/\p{Diacritic}/gu, "")
     .replace(/[-\s]+/g, "_")
     .toUpperCase();
-}
-
-function collectComponentData(html: string, componentNames: Set<string>, warnings: string[]): unknown[] {
-  const $ = cheerio.load(html);
-  const componentData: unknown[] = [];
-
-  $("smartfire-component").each((_, element) => {
-    const name = $(element).attr("name");
-    if (!name || !componentNames.has(name)) {
-      return;
-    }
-
-    const attributes = $(element).attr("attributes");
-    if (!attributes) {
-      warnings.push(`Component ${name} did not include attributes.`);
-      return;
-    }
-
-    const parsed = parseComponentAttributes(attributes, name, warnings);
-    if (parsed) {
-      componentData.push(parsed);
-    }
-  });
-
-  return componentData;
-}
-
-function parseComponentAttributes(attributes: string, componentName: string, warnings: string[]): unknown | null {
-  try {
-    return JSON.parse(attributes);
-  } catch (error) {
-    warnings.push(`Unable to parse ${componentName} attributes: ${errorMessage(error)}`);
-    return null;
-  }
 }
 
 function buildSeasonItems(
@@ -759,8 +726,4 @@ function numberValue(value: unknown): number | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
