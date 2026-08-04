@@ -2,6 +2,7 @@ import type { UrlPolicy } from "../domain/urlPolicy.js";
 import { resolveAllowedUrl } from "../domain/urlPolicy.js";
 import { parseHtmlPage, toIndexedPage } from "./htmlParser.js";
 import type { IndexedPage } from "../domain/page.js";
+import type { StandingsDetails } from "../domain/extraction.js";
 import {
   COMPETITION_SEARCH_LIMIT_MAX,
   COMPETITION_SEARCH_LIMIT_MIN,
@@ -22,6 +23,7 @@ import {
   parseCompetitionDetails,
   parseCompetitionNavigation,
 } from "./navigationParser.js";
+import { parseStandingsExtraction } from "./extractionParser.js";
 
 export interface FfhbClientOptions {
   userAgent: string;
@@ -192,7 +194,7 @@ export class FfhbClient {
     journees: JourneeNavigationItem[];
     warnings: string[];
   }> {
-    const { resolvedPouleUrl, details, poule } = await this.fetchPouleDetails(pouleUrl);
+    const { resolvedPouleUrl, details, poule } = await this.fetchPoulePageDetails(pouleUrl);
     const journees = details.journees.filter((journee) => journee.pouleUrl === resolvedPouleUrl);
 
     const warnings = [...details.warnings];
@@ -211,6 +213,21 @@ export class FfhbClient {
     };
   }
 
+  async getStandings(pouleUrl: string): Promise<StandingsDetails> {
+    const { resolvedPouleUrl, html, details, poule } = await this.fetchPoulePageDetails(pouleUrl);
+    const extraction = parseStandingsExtraction(html);
+
+    return {
+      competition: details.competition,
+      poule,
+      filters: {
+        pouleUrl: resolvedPouleUrl,
+      },
+      standings: extraction.standings,
+      warnings: [...details.warnings, ...extraction.warnings],
+    };
+  }
+
   async listMatches(filters: MatchListFilters): Promise<{
     competition: CompetitionDetails["competition"];
     poule: PouleNavigationItem;
@@ -221,7 +238,7 @@ export class FfhbClient {
     matches: MatchNavigationItem[];
     warnings: string[];
   }> {
-    const { resolvedPouleUrl, details: pouleDetails, poule } = await this.fetchPouleDetails(filters.pouleUrl);
+    const { resolvedPouleUrl, details: pouleDetails, poule } = await this.fetchPoulePageDetails(filters.pouleUrl);
     const journees = pouleDetails.journees.filter((journee) => journee.pouleUrl === resolvedPouleUrl);
 
     const journeeUrl = filters.journeeUrl ? resolveAllowedUrl(filters.journeeUrl, this.options.urlPolicy).href : null;
@@ -255,13 +272,15 @@ export class FfhbClient {
     };
   }
 
-  private async fetchPouleDetails(inputUrl: string): Promise<{
+  private async fetchPoulePageDetails(inputUrl: string): Promise<{
     resolvedPouleUrl: string;
+    html: string;
     details: CompetitionDetails;
     poule: PouleNavigationItem;
   }> {
-    const resolvedPouleUrl = resolveAllowedUrl(inputUrl, this.options.urlPolicy).href;
-    const details = await this.fetchCompetitionDetails(resolvedPouleUrl);
+    const { html, url } = await this.fetchHtml(inputUrl);
+    const resolvedPouleUrl = url.href;
+    const details = parseCompetitionDetails(html, url);
     const poule = details.poules.find((candidate) => candidate.url === resolvedPouleUrl);
 
     if (!poule) {
@@ -270,6 +289,7 @@ export class FfhbClient {
 
     return {
       resolvedPouleUrl,
+      html,
       details,
       poule,
     };

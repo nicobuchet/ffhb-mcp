@@ -442,6 +442,102 @@ test("client lists poule journees and filters matches by selected journee URL", 
   }
 });
 
+test("client gets standings for a canonical poule URL with competition and poule context", async () => {
+  const responses = new Map([
+    [
+      pouleUrl.href,
+      (await fixture("ffhb-poule.html")).replace(
+        "</body>",
+        `${smartfireComponentHtml("competitions---classement", {
+          classements: [
+            {
+              id: "10543916",
+              ext_classementId: "59710893",
+              pouleId: "238789",
+              equipeId: "1764834",
+              ext_equipeId: "2118500",
+              structureId: "532",
+              ext_structureId: "1791",
+              place: "2",
+              point: "38",
+              joue: "22",
+              gagne: "18",
+              nul: "2",
+              perdu: "2",
+              butPlus: "650",
+              butMoins: "540",
+              diff: "110",
+              penalite: "1",
+              equipe_libelle: "BREST BRETAGNE HANDBALL",
+            },
+          ],
+        })}</body>`,
+      ),
+    ],
+  ]);
+  const restoreFetch = stubFetch(responses);
+  const client = new FfhbClient({
+    userAgent: "ffhb-mcp-test",
+    requestTimeoutMs: 1000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+
+  try {
+    const result = await client.getStandings(pouleUrl.href);
+
+    assert.equal(result.competition.label, "LIGUE BUTAGAZ ENERGIE 2026-2027");
+    assert.equal(result.poule.label, "PHASE REGULIERE");
+    assert.deepEqual(result.filters, { pouleUrl: pouleUrl.href });
+    assert.deepEqual(result.standings, [
+      {
+        id: "59710893",
+        internalId: "10543916",
+        pouleId: "238789",
+        rank: 2,
+        team: {
+          id: "1764834",
+          externalId: "2118500",
+          structureId: "532",
+          externalStructureId: "1791",
+          label: "BREST BRETAGNE HANDBALL",
+        },
+        played: 22,
+        points: 38,
+        wins: 18,
+        draws: 2,
+        losses: 2,
+        goalsFor: 650,
+        goalsAgainst: 540,
+        goalDifference: 110,
+        penalties: 1,
+      },
+    ]);
+    assert.deepEqual(result.warnings, []);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("client returns empty standings with a warning when a valid poule page has no standings component", async () => {
+  const responses = new Map([[pouleUrl.href, await fixture("ffhb-poule.html")]]);
+  const restoreFetch = stubFetch(responses);
+  const client = new FfhbClient({
+    userAgent: "ffhb-mcp-test",
+    requestTimeoutMs: 1000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+
+  try {
+    const result = await client.getStandings(pouleUrl.href);
+
+    assert.equal(result.poule.url, pouleUrl.href);
+    assert.deepEqual(result.standings, []);
+    assert.match(result.warnings.join("\n"), /No competitions---classement standings component was embedded/);
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("client lists only journees that belong to the requested poule", async () => {
   const otherPouleUrl = new URL(`${competitionUrl.href}poule-190314/`).href;
   const html = (await fixture("ffhb-poule.html")).replace(
@@ -514,4 +610,14 @@ function stubFetch(responses: Map<string, string>): () => void {
   return () => {
     globalThis.fetch = originalFetch;
   };
+}
+
+function smartfireComponentHtml(componentName: string, attributes: unknown): string {
+  return `<smartfire-component name='${componentName}' attributes='${escapeAttribute(
+    JSON.stringify(attributes),
+  )}'></smartfire-component>`;
+}
+
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }

@@ -1,3 +1,5 @@
+import type { CompetitionMetadata, PouleNavigationItem } from "./navigation.js";
+
 export interface ExtractionTeam {
   id?: string;
   externalId?: string;
@@ -24,6 +26,16 @@ export interface StandingsRow {
 }
 
 export interface StandingsExtraction {
+  standings: StandingsRow[];
+  warnings: string[];
+}
+
+export interface StandingsDetails {
+  competition: CompetitionMetadata;
+  poule: PouleNavigationItem;
+  filters: {
+    pouleUrl: string;
+  };
   standings: StandingsRow[];
   warnings: string[];
 }
