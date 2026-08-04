@@ -568,17 +568,48 @@ test(
   "live smoke: FFHandball poule exposes journees and matches",
   { skip: !process.env.FFHB_LIVE_SMOKE },
   async () => {
-    const client = new FfhbClient({
-      userAgent: "ffhb-mcp-live-smoke",
-      requestTimeoutMs: 10000,
-      urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
-    });
+    const client = createLiveSmokeClient();
 
     const journees = await client.listJournees(pouleUrl.href);
     const matches = await client.listMatches({ pouleUrl: pouleUrl.href, journeeUrl: journeeUrl.href });
 
     assert.ok(journees.journees.length > 0);
     assert.ok(matches.matches.length > 0);
+  },
+);
+
+test(
+  "live smoke: FFHandball poule standings payload matches extractor assumptions",
+  { skip: !process.env.FFHB_LIVE_SMOKE },
+  async () => {
+    const client = createLiveSmokeClient();
+
+    const result = await client.getStandings(pouleUrl.href);
+
+    assert.equal(result.filters.pouleUrl, pouleUrl.href);
+    assert.equal(result.poule.url, pouleUrl.href);
+
+    const warnings = result.warnings.join("\n");
+    if (result.standings.length === 0) {
+      assert.match(warnings, /No competitions---classement standings component was embedded/);
+      return;
+    }
+
+    assert.deepEqual(result.warnings, []);
+    for (const standing of result.standings) {
+      assert.ok(standing.id.length > 0);
+      assert.ok(standing.team.label.length > 0);
+      assert.equal(Number.isInteger(standing.rank), true);
+      assert.equal(isNullableInteger(standing.played), true);
+      assert.equal(isNullableInteger(standing.points), true);
+      assert.equal(isNullableInteger(standing.wins), true);
+      assert.equal(isNullableInteger(standing.draws), true);
+      assert.equal(isNullableInteger(standing.losses), true);
+      assert.equal(isNullableInteger(standing.goalsFor), true);
+      assert.equal(isNullableInteger(standing.goalsAgainst), true);
+      assert.equal(isNullableInteger(standing.goalDifference), true);
+      assert.equal(isNullableInteger(standing.penalties), true);
+    }
   },
 );
 
@@ -610,6 +641,18 @@ function stubFetch(responses: Map<string, string>): () => void {
   return () => {
     globalThis.fetch = originalFetch;
   };
+}
+
+function createLiveSmokeClient(): FfhbClient {
+  return new FfhbClient({
+    userAgent: "ffhb-mcp-live-smoke",
+    requestTimeoutMs: 10000,
+    urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+  });
+}
+
+function isNullableInteger(value: number | null): boolean {
+  return value === null || Number.isInteger(value);
 }
 
 function smartfireComponentHtml(componentName: string, attributes: unknown): string {
