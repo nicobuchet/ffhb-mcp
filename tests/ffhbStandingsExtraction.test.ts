@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseStandingsExtraction } from "../src/ffhb/extractionParser.js";
+import { smartfireComponentHtml } from "./helpers.js";
 
 test("parses standings rows with normalized table-shaped fields", () => {
   const result = parseStandingsExtraction(
-    smartfire("competitions---classement", {
+    smartfireComponentHtml("competitions---classement", {
       classements: [
         {
           id: "10543916",
@@ -112,7 +113,7 @@ test("warns when standings component attributes are malformed", () => {
 
 test("warns and skips malformed standings rows without discarding usable rows", () => {
   const result = parseStandingsExtraction(
-    smartfire("competitions---classement", {
+    smartfireComponentHtml("competitions---classement", {
       classements: [
         {
           id: "10543916",
@@ -189,7 +190,7 @@ test("warns and skips malformed standings rows without discarding usable rows", 
 
 test("does not include raw smartfire component JSON in extracted output", () => {
   const result = parseStandingsExtraction(
-    smartfire("competitions---classement", {
+    smartfireComponentHtml("competitions---classement", {
       ext_saison_id: "22",
       classements: [
         {
@@ -213,13 +214,3 @@ test("does not include raw smartfire component JSON in extracted output", () => 
   assert.equal(JSON.stringify(result).includes("classements"), false);
   assert.equal(JSON.stringify(result).includes("ext_saison_id"), false);
 });
-
-function smartfire(componentName: string, attributes: unknown): string {
-  return `<smartfire-component name='${componentName}' attributes='${escapeAttribute(
-    JSON.stringify(attributes),
-  )}'></smartfire-component>`;
-}
-
-function escapeAttribute(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}

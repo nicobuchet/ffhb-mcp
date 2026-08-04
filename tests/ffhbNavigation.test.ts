@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createUrlPolicy } from "../src/domain/urlPolicy.js";
 import { FfhbClient } from "../src/ffhb/client.js";
 import { parseCompetitionDetails, parseCompetitionNavigation } from "../src/ffhb/navigationParser.js";
+import { smartfireComponentHtml } from "./helpers.js";
 
 const baseUrl = new URL("https://www.ffhandball.fr");
 const seasonUrl = new URL("https://www.ffhandball.fr/competitions/saison-2026-2027-22/");
@@ -13,6 +14,7 @@ const competitionUrl = new URL(
   "https://www.ffhandball.fr/competitions/saison-2026-2027-22/national/ligue-butagaz-energie-2026-2027-30618/",
 );
 const pouleUrl = new URL(`${competitionUrl.href}poule-190313/`);
+const standingsUrl = new URL("classements/", pouleUrl);
 const journeeUrl = new URL(`${pouleUrl.href}journee-1/`);
 
 test("parses seasons with canonical URLs and available competition types", async () => {
@@ -444,8 +446,9 @@ test("client lists poule journees and filters matches by selected journee URL", 
 
 test("client gets standings for a canonical poule URL with competition and poule context", async () => {
   const responses = new Map([
+    [pouleUrl.href, await fixture("ffhb-poule.html")],
     [
-      pouleUrl.href,
+      standingsUrl.href,
       (await fixture("ffhb-poule.html")).replace(
         "</body>",
         `${smartfireComponentHtml("competitions---classement", {
@@ -519,7 +522,10 @@ test("client gets standings for a canonical poule URL with competition and poule
 });
 
 test("client returns empty standings with a warning when a valid poule page has no standings component", async () => {
-  const responses = new Map([[pouleUrl.href, await fixture("ffhb-poule.html")]]);
+  const responses = new Map([
+    [pouleUrl.href, await fixture("ffhb-poule.html")],
+    [standingsUrl.href, await fixture("ffhb-poule.html")],
+  ]);
   const restoreFetch = stubFetch(responses);
   const client = new FfhbClient({
     userAgent: "ffhb-mcp-test",
@@ -589,13 +595,8 @@ test(
     assert.equal(result.filters.pouleUrl, pouleUrl.href);
     assert.equal(result.poule.url, pouleUrl.href);
 
-    const warnings = result.warnings.join("\n");
-    if (result.standings.length === 0) {
-      assert.match(warnings, /No competitions---classement standings component was embedded/);
-      return;
-    }
-
     assert.deepEqual(result.warnings, []);
+    assert.ok(result.standings.length > 0);
     for (const standing of result.standings) {
       assert.ok(standing.id.length > 0);
       assert.ok(standing.team.label.length > 0);
@@ -653,14 +654,4 @@ function createLiveSmokeClient(): FfhbClient {
 
 function isNullableInteger(value: number | null): boolean {
   return value === null || Number.isInteger(value);
-}
-
-function smartfireComponentHtml(componentName: string, attributes: unknown): string {
-  return `<smartfire-component name='${componentName}' attributes='${escapeAttribute(
-    JSON.stringify(attributes),
-  )}'></smartfire-component>`;
-}
-
-function escapeAttribute(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }

@@ -214,7 +214,8 @@ export class FfhbClient {
   }
 
   async getStandings(pouleUrl: string): Promise<StandingsDetails> {
-    const { resolvedPouleUrl, html, details, poule } = await this.fetchPoulePageDetails(pouleUrl);
+    const { resolvedPouleUrl, details, poule } = await this.fetchPoulePageDetails(pouleUrl);
+    const { html } = await this.fetchHtml(standingsPageUrl(resolvedPouleUrl));
     const extraction = parseStandingsExtraction(html);
 
     return {
@@ -362,4 +363,8 @@ function normalizeSearchText(value: string): string {
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase();
+}
+
+function standingsPageUrl(pouleUrl: string): string {
+  return new URL("classements/", pouleUrl).href;
 }
