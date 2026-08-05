@@ -114,6 +114,75 @@ test("MCP users can get standings by canonical poule URL", async () => {
   }
 });
 
+test("MCP users can get match details by canonical match URL", async () => {
+  const matchUrl =
+    "https://www.ffhandball.fr/competitions/saison-2025-2026-21/regional/16-ans-m-excellence-28342/poule-169110/rencontre-2382620/";
+  const output = {
+    metadata: {
+      matchUrl,
+      matchCode: "2382620",
+      fdmCode: "VAGMWKK",
+      status: "Terminé",
+    },
+    teams: {
+      home: { side: "home", label: "PDF HOME CLUB" },
+      away: { side: "away", label: "PDF AWAY CLUB" },
+    },
+    score: { homeScore: 29, awayScore: 26, periods: [] },
+    venue: null,
+    officials: [],
+    tableOfficials: [],
+    staff: [],
+    players: [],
+    timeline: [],
+    pdf: { available: true, parsed: true, url: "https://fdm.fdme.ffhandball.fr/V/A/G/M/VAGMWKK.pdf" },
+    sourceUrls: { matchUrl, pdfUrl: "https://fdm.fdme.ffhandball.fr/V/A/G/M/VAGMWKK.pdf" },
+    warnings: [],
+  };
+  const server = new McpServer({ name: "ffhb-mcp-test-server", version: "0.1.0" });
+  const client = new Client({ name: "ffhb-mcp-test-client", version: "0.1.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+  registerTools(server, {
+    config: testConfig(),
+    client: {
+      getMatch: async (inputMatchUrl: string) => {
+        assert.equal(inputMatchUrl, matchUrl);
+        return output;
+      },
+    } as unknown as FfhbClient,
+    indexer: {} as PageIndexer,
+  });
+
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  try {
+    const tools = await client.listTools();
+    const matchTool = tools.tools.find((tool) => tool.name === "ffhb_get_match");
+
+    assert.ok(matchTool);
+    assert.deepEqual(matchTool.inputSchema.required, ["matchUrl"]);
+
+    const result = (await client.callTool(
+      {
+        name: "ffhb_get_match",
+        arguments: { matchUrl },
+      },
+      CallToolResultSchema,
+    )) as CallToolResult;
+
+    assert.deepEqual(result.structuredContent, output);
+    assert.equal(result.content[0]?.type, "text");
+    if (result.content[0]?.type !== "text") {
+      assert.fail("Expected text content");
+    }
+    assert.deepEqual(JSON.parse(result.content[0].text), output);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 function testConfig(): AppConfig {
   return {
     baseUrl: "https://www.ffhandball.fr",
@@ -121,5 +190,6 @@ function testConfig(): AppConfig {
     requestTimeoutMs: 1000,
     indexPath: "data/index/test-pages.json",
     urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+    fdmBaseUrl: "https://fdm.fdme.ffhandball.fr",
   };
 }

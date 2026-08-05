@@ -1,6 +1,8 @@
 import type { IndexedPage, SearchHit } from "../domain/page.js";
 import { isAllowedUrl, resolveAllowedUrl, type UrlPolicy } from "../domain/urlPolicy.js";
 import type { FfhbClient } from "../ffhb/client.js";
+import { isMatchUrl } from "../ffhb/matchPageParser.js";
+import { matchDetailsTitle, matchDetailsToIndexedText } from "../ffhb/matchSheetParser.js";
 import type { PageStore } from "../storage/pageStore.js";
 
 export interface IndexUrlOptions {
@@ -16,6 +18,21 @@ export class PageIndexer {
 
   async indexUrl(inputUrl: string, options: IndexUrlOptions = {}): Promise<IndexedPage[]> {
     const rootUrl = resolveAllowedUrl(inputUrl, this.urlPolicy);
+    if (isMatchUrl(rootUrl.href)) {
+      const match = await this.client.getMatch(rootUrl.href);
+      const page: IndexedPage = {
+        url: rootUrl.href,
+        title: matchDetailsTitle(match),
+        text: matchDetailsToIndexedText(match),
+        links: match.sourceUrls.pdfUrl ? [{ href: match.sourceUrls.pdfUrl, text: "Match sheet PDF" }] : [],
+        fetchedAt: new Date().toISOString(),
+        source: "ffhb-website",
+      };
+
+      await this.store.put(page);
+      return [page];
+    }
+
     const rootPage = await this.client.fetchPage(rootUrl.href);
     const pages = [rootPage];
 

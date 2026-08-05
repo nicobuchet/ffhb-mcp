@@ -2,6 +2,7 @@ import { createUrlPolicy, type UrlPolicy } from "../domain/urlPolicy.js";
 
 export interface AppConfig {
   baseUrl: string;
+  fdmBaseUrl: string;
   userAgent: string;
   requestTimeoutMs: number;
   indexPath: string;
@@ -10,6 +11,7 @@ export interface AppConfig {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const baseUrl = env.FFHB_BASE_URL ?? "https://www.ffhandball.fr";
+  const fdmBaseUrl = env.FFHB_FDM_BASE_URL ?? "https://fdm.fdme.ffhandball.fr";
   const allowedHosts = (env.FFHB_ALLOWED_HOSTS ?? "ffhandball.fr,www.ffhandball.fr")
     .split(",")
     .map((host) => host.trim())
@@ -23,6 +25,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     baseUrl,
+    fdmBaseUrl,
     userAgent: env.FFHB_USER_AGENT ?? "ffhb-mcp/0.1.0",
     requestTimeoutMs,
     indexPath: env.FFHB_INDEX_PATH ?? "data/index/pages.json",

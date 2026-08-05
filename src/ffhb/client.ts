@@ -1,8 +1,9 @@
+import { PDFParse } from "pdf-parse";
 import type { UrlPolicy } from "../domain/urlPolicy.js";
-import { resolveAllowedUrl } from "../domain/urlPolicy.js";
+import { createUrlPolicy, resolveAllowedUrl } from "../domain/urlPolicy.js";
 import { parseHtmlPage, toIndexedPage } from "./htmlParser.js";
 import type { IndexedPage } from "../domain/page.js";
-import type { StandingsDetails } from "../domain/extraction.js";
+import type { MatchDetails, StandingsDetails } from "../domain/extraction.js";
 import {
   COMPETITION_SEARCH_LIMIT_MAX,
   COMPETITION_SEARCH_LIMIT_MIN,
@@ -24,11 +25,16 @@ import {
   parseCompetitionNavigation,
 } from "./navigationParser.js";
 import { parseStandingsExtraction } from "./extractionParser.js";
+import { errorMessage } from "./errors.js";
+import { isMatchUrl, parseMatchPage } from "./matchPageParser.js";
+import { parseMatchSheetText } from "./matchSheetParser.js";
 
 export interface FfhbClientOptions {
   userAgent: string;
   requestTimeoutMs: number;
   urlPolicy: UrlPolicy;
+  fdmBaseUrl?: string;
+  pdfTextExtractor?: (data: Uint8Array) => Promise<string>;
 }
 
 export class FfhbClient {
@@ -37,6 +43,63 @@ export class FfhbClient {
   async fetchPage(inputUrl: string): Promise<IndexedPage> {
     const { html, url } = await this.fetchHtml(inputUrl);
     return toIndexedPage(parseHtmlPage(html, url), url);
+  }
+
+  async getMatch(matchUrl: string): Promise<MatchDetails> {
+    const { html, url } = await this.fetchHtml(matchUrl);
+    if (!isMatchUrl(url.href)) {
+      throw new Error(`Expected a canonical FFHandball match URL: ${url.href}`);
+    }
+
+    const fdmBaseUrl = this.options.fdmBaseUrl ?? "https://fdm.fdme.ffhandball.fr";
+    const parsedPage = parseMatchPage(html, url, fdmBaseUrl);
+    const warnings = [...parsedPage.fallback.warnings];
+    const pdfUrl = parsedPage.directPdfUrl ?? parsedPage.fallback.sourceUrls.pdfUrl ?? null;
+    const partialMatch = (
+      pdf: MatchDetails["pdf"],
+      sourceUrls: MatchDetails["sourceUrls"] = { matchUrl: url.href },
+    ): MatchDetails => ({
+      ...parsedPage.fallback,
+      pdf,
+      sourceUrls,
+      warnings,
+    });
+
+    if (!pdfUrl) {
+      warnings.push("No match sheet PDF URL could be discovered from the match page.");
+      return partialMatch({ available: false, parsed: false });
+    }
+
+    let allowedPdfUrl: URL;
+    try {
+      allowedPdfUrl = resolveAllowedUrl(pdfUrl, createUrlPolicy(fdmBaseUrl, []));
+    } catch (error) {
+      warnings.push(`Match sheet PDF URL is not allowed: ${errorMessage(error)}`);
+      return partialMatch({ available: false, parsed: false, url: pdfUrl, error: errorMessage(error) });
+    }
+
+    let pdfBytes: Uint8Array;
+    try {
+      pdfBytes = await this.fetchPdf(allowedPdfUrl);
+    } catch (error) {
+      warnings.push(`Unable to fetch match sheet PDF: ${errorMessage(error)}`);
+      return partialMatch(
+        { available: true, parsed: false, url: allowedPdfUrl.href, error: errorMessage(error) },
+        { matchUrl: url.href, pdfUrl: allowedPdfUrl.href },
+      );
+    }
+
+    try {
+      const text = await this.extractPdfText(pdfBytes);
+      const parsedPdf = parseMatchSheetText(text, { matchUrl: url.href, pdfUrl: allowedPdfUrl.href });
+      return mergePdfMatchDetails(parsedPdf, parsedPage.fallback, warnings);
+    } catch (error) {
+      warnings.push(`Unable to parse match sheet PDF: ${errorMessage(error)}`);
+      return partialMatch(
+        { available: true, parsed: false, url: allowedPdfUrl.href, error: errorMessage(error) },
+        { matchUrl: url.href, pdfUrl: allowedPdfUrl.href },
+      );
+    }
   }
 
   async listSeasons(): Promise<{ seasons: SeasonNavigationItem[]; warnings: string[] }> {
@@ -319,6 +382,30 @@ export class FfhbClient {
     }
   }
 
+  private async fetchPdf(url: URL): Promise<Uint8Array> {
+    const response = await this.fetch(url);
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType && !contentType.includes("application/pdf") && !contentType.includes("octet-stream")) {
+      throw new Error(`Expected PDF from ${url.href}, received ${contentType}`);
+    }
+
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  private async extractPdfText(data: Uint8Array): Promise<string> {
+    if (this.options.pdfTextExtractor) {
+      return this.options.pdfTextExtractor(data);
+    }
+
+    const parser = new PDFParse({ data });
+    try {
+      const result = await parser.getText();
+      return result.text;
+    } finally {
+      await parser.destroy();
+    }
+  }
+
   private async fetchHtml(inputUrl: string): Promise<{ html: string; url: URL }> {
     const url = resolveAllowedUrl(inputUrl, this.options.urlPolicy);
     const response = await this.fetch(url);
@@ -343,6 +430,25 @@ export class FfhbClient {
     const { html, url } = await this.fetchHtml(inputUrl);
     return parseCompetitionDetails(html, url);
   }
+}
+
+function mergePdfMatchDetails(
+  parsedPdf: MatchDetails,
+  fallback: MatchDetails,
+  priorWarnings: string[],
+): MatchDetails {
+  return {
+    ...parsedPdf,
+    metadata: {
+      ...fallback.metadata,
+      ...parsedPdf.metadata,
+      fdmCode: parsedPdf.metadata.fdmCode ?? fallback.metadata.fdmCode,
+      scheduledAt: parsedPdf.metadata.scheduledAt ?? fallback.metadata.scheduledAt,
+    },
+    venue: parsedPdf.venue ?? fallback.venue,
+    officials: parsedPdf.officials.length > 0 ? parsedPdf.officials : fallback.officials,
+    warnings: [...priorWarnings, ...parsedPdf.warnings],
+  };
 }
 
 function matchesQuery(competition: CompetitionSearchResult, query: string): boolean {
