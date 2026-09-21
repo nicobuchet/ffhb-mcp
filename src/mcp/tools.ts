@@ -160,6 +160,26 @@ export function registerTools(server: McpServer, dependencies: ToolDependencies)
   );
 
   server.registerTool(
+    "ffhb_get_match",
+    {
+      title: "Get FFHandball match",
+      description: "Fetch one canonical FFHandball match URL and extract public structured match sheet details.",
+      inputSchema: {
+        matchUrl: z.string().min(1).describe("Canonical FFHandball match URL."),
+      },
+    },
+    async ({ matchUrl }) => {
+      const result = await dependencies.client.getMatch(matchUrl);
+      const output: Record<string, unknown> = { ...result };
+
+      return {
+        content: [{ type: "text", text: jsonText(output) }],
+        structuredContent: output,
+      };
+    },
+  );
+
+  server.registerTool(
     "ffhb_fetch_page",
     {
       title: "Fetch FFHandball page",

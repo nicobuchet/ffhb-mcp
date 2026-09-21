@@ -1,0 +1,41 @@
+Feuille de match
+Organisateur: Ligue Bretagne
+Competition: 16 ANS M EXCELLENCE
+Poule: POULE 1
+Groupe: Excellence
+Code rencontre: 2382620
+Code FDM: VAGMWKK
+Statut: Terminé
+Date: 31/05/2026 11:00
+Lieu: GYMNASE OFFICIEL - Terrain 1
+
+Score final: PDF HOME CLUB 29 - 26 PDF AWAY CLUB
+Mi-temps: PDF HOME CLUB 14 - 12 PDF AWAY CLUB
+Periode 1: 14 - 12
+Periode 2: 15 - 14
+
+Arbitres
+Juge arbitre 1: Alice Martin
+Juge arbitre 2: Bruno Robert
+Chronometreur: Claire Durand
+Secretaire: Denis Petit
+
+Equipe JR / Recevant: PDF HOME CLUB
+Officiel A: Coach Home
+N  Licence   Nom Prenom       B  B7m  T  A  AV  2MN  D
+7  1234567   PIVOT Louise     5  1    8  0  1   0    0
+14 7654321   GARDIENNE Emma    0  0    0  6  0   0    D
+
+Equipe JV / Visiteur: PDF AWAY CLUB
+Officiel A: Coach Away
+N  Licence   Nom Prenom       B  B7m  T  A  AV  2MN  D
+15 5555555   ARRIERE Nora     4  0    9  0  0   1    0
+
+Historique
+Periode Temps Score Cote Action
+1 00:31 1-0 JR But 7 Louise Pivot
+1 01:12 1-1 JV But 15 Nora Arriere
+1 02:00 1-1 JR Avertissement 7 Louise Pivot
+2 45:18 20-19 JV 2MN 15 Nora Arriere
+2 49:10 22-20 JR Arret 14 Emma Gardienne
+2 55:00 25-24 JR Temps mort equipe

@@ -1,0 +1,58 @@
+Organisateur LIGUE EXEMPLE (6100000) Code Renc WAGRKLA
+Compétition +16 ANS M PRENATIONALE (PHASE UNIQUE)
+POULE B
+Groupe M61000002G
+HOME CLUB / AWAY CLUB 33 33
+Date samedi 12/09/2026 20:30 Journée J1 Salle GYMNASE EXEMPLE
+Chronométreur Camille Table 1234567890123 Juge arbitre 1 Alex Arbitre 1234567890124
+Secrétaire Dominique Table 1234567890125 Juge arbitre 2 Robin Arbitre 1234567890126
+Tuteur de table Juge accomp.
+Resp. de salle Sam Salle 1234567890127 Juge délégué
+Speaker Délégué officiel
+Club
+ recevant
+ - 6134041
+HOME CLUB
+Capt N° NOM Prénom (Nom d'usage) Licence Type JFL Buts 7m Tirs Arrets Av. 2' Dis
+X 51 JOUEUR Camille 1234567890128 A 8 0 9 0 1 0 0
+Officiel Resp. A Coach Home 1234567890129 A X X
+Club
+ visiteur
+ - 6166003
+AWAY CLUB
+Capt N° NOM Prénom (Nom d'usage) Licence Type JFL Buts 7m Tirs Arrets Av. 2' Dis
+39 JOUEUR-AUTRE Dominique 1234567890130 A 5 0 8 0 0 0 0
+Officiel Resp. A Coach Away 1234567890131 A
+Détail score
+Période 1
+REC VIS
+15 17
+Fin Tps Reglem.
+REC VIS
+33 33
+
+-- 1 of 3 --
+
+Organisateur LIGUE EXEMPLE (6100000) Code Renc WAGRKLA
+HOME CLUB / AWAY CLUB 33 33
+Déroulé du match
+PERIODE 1
+Temps Score Action
+00:39 00 - 01 But JOUEUR-AUTRE Dominique
+00:57 00 - 01 Tir non-cadré JOUEUR Camille
+02:09 01 - 01 But JOUEUR Camille
+03:05 01 - 01 Arrêt JOUEUR-AUTRE Dominique
+05:46 01 - 01 Avertissement JOUEUR Camille
+06:45 02 - 01 But 7m JOUEUR Camille
+15:06 02 - 01 Temps mort Visiteur
+17:07 02 - 01 2MN JOUEUR Camille
+PERIODE 2
+30:39 16 - 17 But JOUEUR Camille
+
+-- 2 of 3 --
+
+Organisateur LIGUE EXEMPLE (6100000) Code Renc WAGRKLA
+HOME CLUB / AWAY CLUB 33 33
+Déroulé du match
+Temps Score Action
+59:59 33 - 33 But JOUEUR-AUTRE Dominique

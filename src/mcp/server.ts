@@ -25,6 +25,7 @@ export function createServer(config: AppConfig): McpServer {
     userAgent: config.userAgent,
     requestTimeoutMs: config.requestTimeoutMs,
     urlPolicy: config.urlPolicy,
+    fdmBaseUrl: config.fdmBaseUrl,
   });
   const indexer = new PageIndexer(client, store, config.urlPolicy);
 
