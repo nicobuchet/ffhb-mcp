@@ -25,9 +25,15 @@ Tools:
 - `ffhb_list_journees`: list journees for a poule URL returned by `ffhb_list_poules`.
 - `ffhb_get_standings`: get normalized standings for a poule URL returned by `ffhb_list_poules`.
 - `ffhb_list_matches`: list matches for a poule, optionally restricted to a journee URL returned by `ffhb_list_journees`.
+- `ffhb_get_match`: get structured match details from a canonical `matchUrl`, using the match sheet PDF when available and HTML as fallback. Both `players` and `staff` are grouped as `{ "home": [...], "away": [...] }`; each side is an empty array when no entries are available. Entries retain their `teamSide` fields and player IDs.
 - `ffhb_fetch_page`: fetch and parse a single FFHandball page.
 - `ffhb_index_url`: fetch one page and optionally shallow-index same-site links found on it.
 - `ffhb_search_index`: search the local page index.
+
+Player entries use `firstName` for the given name and `lastName` for the family name.
+HTML name fields take precedence over display labels; PDF names are split using
+FFHB's uppercase-family-name convention. If a display name has no reliable split,
+it is preserved in `firstName` and `lastName` is empty. Search includes both fields.
 
 Resources:
 

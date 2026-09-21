@@ -101,7 +101,8 @@ export interface MatchPlayer {
   teamSide: TeamSide;
   originalSide?: string;
   number: string;
-  name: string;
+  firstName: string;
+  lastName: string;
   stats: MatchPlayerStats;
   disqualified: boolean;
 }
@@ -152,8 +153,8 @@ export interface MatchDetails {
   venue: MatchVenue | null;
   officials: MatchOfficial[];
   tableOfficials: MatchOfficial[];
-  staff: MatchOfficial[];
-  players: MatchPlayer[];
+  staff: Record<TeamSide, MatchOfficial[]>;
+  players: Record<TeamSide, MatchPlayer[]>;
   timeline: MatchTimelineEvent[];
   pdf: MatchPdfStatus;
   sourceUrls: {

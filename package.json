@@ -19,6 +19,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cheerio": "^1.2.0",
     "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "5.4.296",
     "zod": "^4.4.3"
   },
   "devDependencies": {

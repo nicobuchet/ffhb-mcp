@@ -1,4 +1,3 @@
-import { PDFParse } from "pdf-parse";
 import type { UrlPolicy } from "../domain/urlPolicy.js";
 import { createUrlPolicy, resolveAllowedUrl } from "../domain/urlPolicy.js";
 import { parseHtmlPage, toIndexedPage } from "./htmlParser.js";
@@ -28,6 +27,7 @@ import { parseStandingsExtraction } from "./extractionParser.js";
 import { errorMessage } from "./errors.js";
 import { isMatchUrl, parseMatchPage } from "./matchPageParser.js";
 import { parseMatchSheetText } from "./matchSheetParser.js";
+import { extractMatchSheetPdf, type MatchSheetSource } from "./matchSheetPdf.js";
 
 export interface FfhbClientOptions {
   userAgent: string;
@@ -90,8 +90,11 @@ export class FfhbClient {
     }
 
     try {
-      const text = await this.extractPdfText(pdfBytes);
-      const parsedPdf = parseMatchSheetText(text, { matchUrl: url.href, pdfUrl: allowedPdfUrl.href });
+      const source = await this.extractPdfSource(pdfBytes);
+      const parsedPdf = parseMatchSheetText(source.text, {
+        matchUrl: url.href, pdfUrl: allowedPdfUrl.href,
+        playerStatsByLicence: source.playerStatsByLicence,
+      });
       return mergePdfMatchDetails(parsedPdf, parsedPage.fallback, warnings);
     } catch (error) {
       warnings.push(`Unable to parse match sheet PDF: ${errorMessage(error)}`);
@@ -392,18 +395,11 @@ export class FfhbClient {
     return new Uint8Array(await response.arrayBuffer());
   }
 
-  private async extractPdfText(data: Uint8Array): Promise<string> {
+  private async extractPdfSource(data: Uint8Array): Promise<MatchSheetSource> {
     if (this.options.pdfTextExtractor) {
-      return this.options.pdfTextExtractor(data);
+      return { text: await this.options.pdfTextExtractor(data) };
     }
-
-    const parser = new PDFParse({ data });
-    try {
-      const result = await parser.getText();
-      return result.text;
-    } finally {
-      await parser.destroy();
-    }
+    return extractMatchSheetPdf(data);
   }
 
   private async fetchHtml(inputUrl: string): Promise<{ html: string; url: URL }> {

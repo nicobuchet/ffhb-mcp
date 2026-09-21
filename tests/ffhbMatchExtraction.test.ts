@@ -13,6 +13,43 @@ const matchUrl =
   "https://www.ffhandball.fr/competitions/saison-2025-2026-21/regional/16-ans-m-excellence-28342/poule-169110/rencontre-2382620/";
 const pdfUrl = "https://fdm.fdme.ffhandball.fr/V/A/G/M/VAGMWKK.pdf";
 
+for (const layout of ["legacy", "2026"]) {
+  test(`PDF ${layout} roster statistics preserve empty columns through the client`, async () => {
+    // Synthetic PDFs retain the real column positions, with fictitious names/licences.
+    // Use the real PDF reader here: plain-text fixtures cannot represent absent cells.
+    const bytes = await readFile(join(process.cwd(), "tests", "fixtures", `ffhb-stats-${layout}.pdf`));
+    const restoreFetch = stubFetch(new Map([
+      [matchUrl, htmlResponse(await fixture("ffhb-match.html"))],
+      [pdfUrl, new Response(new Uint8Array(bytes), { headers: { "content-type": "application/pdf" } })],
+    ]));
+    try {
+      const client = new FfhbClient({
+        userAgent: "ffhb-test", requestTimeoutMs: 1000,
+        urlPolicy: createUrlPolicy("https://www.ffhandball.fr", []),
+      });
+      const result = await client.getMatch(matchUrl);
+      assert.equal(result.pdf.parsed, true, result.warnings.join("\n"));
+      assert.equal(result.players.home[0]?.firstName, "One");
+      assert.equal(result.players.home[0]?.lastName, "Player");
+      assert.deepEqual(result.players.home.map((player) => player.stats), [
+        { goals: 2, sevenMeterGoals: 0, shots: 2, saves: 0, warnings: 0, twoMinuteSuspensions: 1, disqualifications: 0 },
+        { goals: 0, sevenMeterGoals: 0, shots: 0, saves: 16, warnings: 0, twoMinuteSuspensions: 0, disqualifications: 0 },
+        { goals: 0, sevenMeterGoals: 0, shots: 0, saves: 0, warnings: 0, twoMinuteSuspensions: 3, disqualifications: 1 },
+        { goals: 0, sevenMeterGoals: 0, shots: 0, saves: 0, warnings: 0, twoMinuteSuspensions: 0, disqualifications: 0 },
+        { goals: 6, sevenMeterGoals: 2, shots: 9, saves: 0, warnings: 1, twoMinuteSuspensions: 0, disqualifications: 0 },
+      ]);
+      assert.deepEqual(result.players.home.map((player) => player.disqualified), [false, false, true, false, false]);
+      assert.deepEqual(result.players.away[0]?.stats, {
+        goals: 0, sevenMeterGoals: 0, shots: 0, saves: 0, warnings: 1, twoMinuteSuspensions: 0, disqualifications: 0,
+      });
+      assert.equal(result.players.away[0]?.disqualified, false);
+      assert.doesNotMatch(JSON.stringify(result), /123456789000\d/);
+    } finally {
+      restoreFetch();
+    }
+  });
+}
+
 test("parses public match sheet text with normalized teams, stats, timeline, and no licence numbers", async () => {
   const parsed = parseMatchSheetText(await fixture("ffhb-match-sheet.txt"), { matchUrl, pdfUrl });
 
@@ -29,16 +66,16 @@ test("parses public match sheet text with normalized teams, stats, timeline, and
     { label: "period_2", homeScore: 15, awayScore: 14 },
   ]);
   assert.deepEqual(parsed.tableOfficials.map((official) => official.role), ["chronometreur", "secretaire"]);
-  assert.deepEqual(parsed.staff.map((official) => `${official.teamSide}:${official.name}`), [
-    "home:Coach Home",
-    "away:Coach Away",
-  ]);
-  assert.deepEqual(parsed.players[0], {
+  assert.deepEqual(parsed.staff.home.map((official) => official.name), ["Coach Home"]);
+  assert.deepEqual(parsed.staff.away.map((official) => official.name), ["Coach Away"]);
+  assert.deepEqual(parsed.players.away.map((player) => player.id), ["away:15"]);
+  assert.deepEqual(parsed.players.home[0], {
     id: "home:7",
     teamSide: "home",
     originalSide: "JR / Recevant",
     number: "7",
-    name: "Louise Pivot",
+    firstName: "Louise",
+    lastName: "Pivot",
     stats: {
       goals: 5,
       sevenMeterGoals: 1,
@@ -50,9 +87,9 @@ test("parses public match sheet text with normalized teams, stats, timeline, and
     },
     disqualified: false,
   });
-  assert.equal(parsed.players[1]?.stats.goals, 0);
-  assert.equal(parsed.players[1]?.stats.saves, 6);
-  assert.equal(parsed.players[1]?.disqualified, true);
+  assert.equal(parsed.players.home[1]?.stats.goals, 0);
+  assert.equal(parsed.players.home[1]?.stats.saves, 6);
+  assert.equal(parsed.players.home[1]?.disqualified, true);
   assert.deepEqual(
     parsed.timeline.map((event) => ({
       period: event.period,
@@ -101,6 +138,25 @@ test("parses public match sheet text with normalized teams, stats, timeline, and
   assert.deepEqual(parsed.warnings, []);
 });
 
+test("separates PDF given names from multiword and hyphenated surnames", async () => {
+  const text = (await fixture("ffhb-match-sheet-2026.txt"))
+    .replaceAll("JOUEUR Camille", "EL BALI Jean-Pierre")
+    .replaceAll("JOUEUR-AUTRE Dominique", "PERRIN--PASSERAT Élise Marie");
+  const result = parseMatchSheetText(text, { matchUrl });
+  assert.equal(result.players.home[0]?.firstName, "Jean-Pierre");
+  assert.equal(result.players.home[0]?.lastName, "El Bali");
+  assert.equal(result.players.away[0]?.firstName, "Élise Marie");
+  assert.equal(result.players.away[0]?.lastName, "Perrin--Passerat");
+  assert.equal(result.players.home[0]?.id, "home:51");
+});
+
+test("keeps ambiguous PDF display names without inventing a surname", async () => {
+  const text = (await fixture("ffhb-match-sheet-2026.txt")).replaceAll("JOUEUR Camille", "LEE LI");
+  const result = parseMatchSheetText(text, { matchUrl });
+  assert.equal(result.players.home[0]?.firstName, "Lee Li");
+  assert.equal(result.players.home[0]?.lastName, "");
+});
+
 test("client gets a match by URL, prefers the embedded PDF URL, and keeps PDF data authoritative", async () => {
   const fetchedUrls: string[] = [];
   const restoreFetch = stubFetch(
@@ -130,6 +186,74 @@ test("client gets a match by URL, prefers the embedded PDF URL, and keeps PDF da
   }
 });
 
+test("parses 2026 match sheets with split club headers and updated metadata labels", async () => {
+  const parsed = parseMatchSheetText(await fixture("ffhb-match-sheet-2026.txt"), { matchUrl });
+
+  assert.equal(parsed.pdf.parsed, true);
+  assert.equal(parsed.metadata.fdmCode, "WAGRKLA");
+  assert.equal(parsed.metadata.scheduledAt, "samedi 12/09/2026 20:30");
+  assert.equal(parsed.venue?.name, "GYMNASE EXEMPLE");
+  assert.equal(parsed.teams.home.label, "HOME CLUB");
+  assert.equal(parsed.teams.away.label, "AWAY CLUB");
+  assert.equal(parsed.score?.homeScore, 33);
+  assert.equal(parsed.score?.awayScore, 33);
+  assert.deepEqual(parsed.score?.periods, [{ label: "period_1", homeScore: 15, awayScore: 17 }]);
+  assert.deepEqual(parsed.players.home.map((player) => player.id), ["home:51"]);
+  assert.deepEqual(parsed.players.away.map((player) => player.id), ["away:39"]);
+  assert.deepEqual(parsed.staff.home.map((official) => [official.teamSide, official.role, official.name]), [
+    ["home", "officiel_a", "Coach Home"],
+  ]);
+  assert.deepEqual(parsed.staff.away.map((official) => [official.teamSide, official.role, official.name]), [
+    ["away", "officiel_a", "Coach Away"],
+  ]);
+  assert.equal(parsed.tableOfficials.find((official) => official.role === "responsable_de_salle")?.name, "Sam Salle");
+  assert.equal(parsed.tableOfficials.some((official) => official.name === "Juge accomp."), false);
+  assert.doesNotMatch(JSON.stringify(parsed), /12345678901\d{2}/);
+  assert.equal(parsed.warnings.some((warning) => warning.includes("Unable to parse player row")), false);
+});
+
+test("retains 2026 inline timeline actions and names without guessing player links", async () => {
+  const parsed = parseMatchSheetText(await fixture("ffhb-match-sheet-2026.txt"), { matchUrl });
+
+  assert.equal(parsed.timeline.length, 10);
+  assert.deepEqual(parsed.timeline[0], {
+    period: 1, time: "00:39", score: "00-01", teamSide: null, sourceSide: null,
+    type: "goal", actionText: "But JOUEUR-AUTRE Dominique",
+    playerNumber: null, playerName: "Joueur-Autre Dominique", playerId: null,
+    raw: "00:39 00 - 01 But JOUEUR-AUTRE Dominique",
+  });
+  assert.equal(parsed.timeline[1]?.type, "shot");
+  assert.equal(parsed.timeline[1]?.playerName, "Joueur Camille");
+  assert.equal(parsed.timeline[5]?.type, "seven_meter_goal");
+  assert.equal(parsed.timeline[5]?.playerName, "Joueur Camille");
+  assert.equal(parsed.timeline[6]?.type, "team_timeout");
+  assert.equal(parsed.timeline[6]?.teamSide, "away");
+  assert.equal(parsed.timeline[6]?.playerName, null);
+  assert.equal(parsed.timeline.at(-1)?.period, 2);
+  assert.equal(parsed.timeline.at(-1)?.score, "33-33");
+  assert.ok(parsed.timeline.every((event) => event.playerId === null && event.playerNumber === null));
+});
+
+test("client returns a parsed PDF instead of the core identity fallback for 2026 sheets", async () => {
+  const newPdfUrl = "https://fdm.fdme.ffhandball.fr/W/A/G/R/WAGRKLA.pdf";
+  const html = (await fixture("ffhb-match.html")).replaceAll(pdfUrl, newPdfUrl).replaceAll("VAGMWKK", "WAGRKLA");
+  const restoreFetch = stubFetch(new Map([
+    [matchUrl, htmlResponse(html)], [newPdfUrl, pdfResponse("fixture PDF")],
+  ]));
+  try {
+    const result = await testClient(async () => fixture("ffhb-match-sheet-2026.txt")).getMatch(matchUrl);
+    assert.equal(result.pdf.parsed, true);
+    assert.equal(result.pdf.url, newPdfUrl);
+    assert.equal(result.score?.homeScore, 33);
+    assert.equal(result.players.home.length, 1);
+    assert.equal(result.players.away.length, 1);
+    assert.equal(result.timeline.length, 10);
+    assert.doesNotMatch(result.warnings.join("\n"), /Unable to parse match sheet PDF/);
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("client returns partial HTML match data with warnings when no PDF can be discovered", async () => {
   const restoreFetch = stubFetch(new Map([[matchUrl, htmlResponse(await fixture("ffhb-match-no-pdf.html"))]]));
   const client = testClient(async () => {
@@ -145,20 +269,22 @@ test("client returns partial HTML match data with warnings when no PDF can be di
     assert.equal(result.teams.home.label, "HTML HOME FALLBACK");
     assert.equal(result.score?.homeScore, 21);
     assert.deepEqual(
-      result.players.map((player) => ({
+      Object.fromEntries(Object.entries(result.players).map(([side, players]) => [side, players.map((player) => ({
         id: player.id,
         teamSide: player.teamSide,
         number: player.number,
-        name: player.name,
+        firstName: player.firstName,
+        lastName: player.lastName,
         goals: player.stats.goals,
         shots: player.stats.shots,
         warnings: player.stats.warnings,
-      })),
-      [
-        { id: "home:9", teamSide: "home", number: "9", name: "Fallback Home", goals: 3, shots: 5, warnings: 0 },
-        { id: "away:4", teamSide: "away", number: "4", name: "Fallback Away", goals: 0, shots: 0, warnings: 1 },
-      ],
+      }))])),
+      {
+        home: [{ id: "home:9", teamSide: "home", number: "9", firstName: "Home", lastName: "Fallback", goals: 3, shots: 5, warnings: 0 }],
+        away: [{ id: "away:4", teamSide: "away", number: "4", firstName: "Away", lastName: "Fallback", goals: 0, shots: 0, warnings: 1 }],
+      },
     );
+    assert.deepEqual(result.staff, { home: [], away: [] });
     assert.equal(JSON.stringify(result).includes("9999999"), false);
     assert.match(result.warnings.join("\n"), /No match sheet PDF URL could be discovered/);
   } finally {
@@ -231,7 +357,10 @@ test("indexing a match URL stores a searchable synthetic public page without lic
   assert.equal(pages[0]?.url, matchUrl);
   assert.equal(pages[0]?.title, "PDF HOME CLUB 29-26 PDF AWAY CLUB");
   assert.equal(pages[0]?.source, "ffhb-website");
-  assert.equal(pages[0]?.text.includes("Louise Pivot"), true);
+  for (const term of ["Louise Pivot", "Nora Arriere", "Coach Home", "Coach Away"]) {
+    assert.equal(pages[0]?.text.includes(term), true);
+    assert.equal((await indexer.search(term, 5))[0]?.page.url, matchUrl);
+  }
   assert.equal(pages[0]?.text.includes("team_timeout"), true);
   assert.equal(pages[0]?.text.includes("1234567"), false);
   assert.equal(hits[0]?.page.url, matchUrl);
@@ -257,7 +386,8 @@ test(
     assert.ok(result.teams.home.label.length > 0);
     assert.ok(result.teams.away.label.length > 0);
     assert.ok(result.score?.homeScore !== undefined);
-    assert.ok(result.players.length > 0);
+    assert.ok(result.players.home.length > 0);
+    assert.ok(result.players.away.length > 0);
     assert.ok(result.timeline.length > 0);
   },
 );

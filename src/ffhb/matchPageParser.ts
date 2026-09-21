@@ -1,7 +1,8 @@
 import * as cheerio from "cheerio";
-import type { MatchDetails, MatchOfficial, MatchPlayer, MatchPlayerStats, MatchVenue, TeamSide } from "../domain/extraction.js";
+import type { MatchDetails, MatchOfficial, MatchPlayerStats, MatchVenue, TeamSide } from "../domain/extraction.js";
 import { inferMatchUrlContext } from "./matchUrl.js";
 import { parseComponentAttributes } from "./smartfireComponents.js";
+import { splitPlayerName, type PlayerName } from "./playerName.js";
 
 export interface ParsedMatchPage {
   fallback: MatchDetails;
@@ -56,7 +57,7 @@ export function parseMatchPage(html: string, pageUrl: URL, fdmBaseUrl: string): 
       venue: buildVenue(records, rencontre),
       officials: buildOfficials(records),
       tableOfficials: [],
-      staff: [],
+      staff: { home: [], away: [] },
       players: buildHtmlPlayers(records, rencontre, { home: homeTeam, away: awayTeam }),
       timeline: [],
       pdf: {
@@ -181,20 +182,20 @@ function buildHtmlPlayers(
   records: Record<string, unknown>[],
   rencontre: Record<string, unknown> | null,
   teams: MatchDetails["teams"],
-): MatchPlayer[] {
+): MatchDetails["players"] {
   const rawPlayers = [
     ...findArraysByKey(records, "joueurs").flat(),
     ...findArraysByKey(records, "players").flat(),
     ...findArraysByKey(records, "playerList").flat(),
   ].filter(isRecord);
-  const players: MatchPlayer[] = [];
+  const players: MatchDetails["players"] = { home: [], away: [] };
   const seen = new Set<string>();
 
   for (const rawPlayer of rawPlayers) {
     const teamSide = htmlPlayerSide(rawPlayer, rencontre, teams);
     const number = stringValue(rawPlayer.numero) || stringValue(rawPlayer.num) || stringValue(rawPlayer.numeroMaillot);
-    const name = htmlPlayerName(rawPlayer);
-    if (!teamSide || !number || !name) {
+    const playerName = htmlPlayerName(rawPlayer);
+    if (!teamSide || !number || (!playerName.firstName && !playerName.lastName)) {
       continue;
     }
 
@@ -205,11 +206,11 @@ function buildHtmlPlayers(
 
     seen.add(id);
     const stats = htmlPlayerStats(rawPlayer);
-    players.push({
+    players[teamSide].push({
       id,
       teamSide,
       number,
-      name,
+      ...playerName,
       stats,
       disqualified: stats.disqualifications > 0,
     });
@@ -245,14 +246,16 @@ function htmlPlayerSide(
   return null;
 }
 
-function htmlPlayerName(rawPlayer: Record<string, unknown>): string {
+function htmlPlayerName(rawPlayer: Record<string, unknown>): PlayerName {
+  const firstName = stringValue(rawPlayer.prenom) || stringValue(rawPlayer.firstName);
+  const lastName = stringValue(rawPlayer.nom) || stringValue(rawPlayer.lastName) || stringValue(rawPlayer.surname);
+  if (firstName || lastName) return { firstName, lastName };
+
   const fullName =
     stringValue(rawPlayer.nomComplet) ||
     stringValue(rawPlayer.libelle) ||
-    stringValue(rawPlayer.name) ||
-    [stringValue(rawPlayer.nom), stringValue(rawPlayer.prenom)].filter(Boolean).join(" ");
-
-  return fullName.replace(/\s+/g, " ").trim();
+    stringValue(rawPlayer.name);
+  return splitPlayerName(fullName);
 }
 
 function htmlPlayerStats(rawPlayer: Record<string, unknown>): MatchPlayerStats {

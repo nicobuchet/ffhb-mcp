@@ -23,13 +23,13 @@ Secretaire: Denis Petit
 Equipe JR / Recevant: PDF HOME CLUB
 Officiel A: Coach Home
 N  Licence   Nom Prenom       B  B7m  T  A  AV  2MN  D
-7  1234567   Louise Pivot     5  1    8  0  1   0
-14 7654321   Emma Gardienne        0   0  6      0    D
+7  1234567   PIVOT Louise     5  1    8  0  1   0    0
+14 7654321   GARDIENNE Emma    0  0    0  6  0   0    D
 
 Equipe JV / Visiteur: PDF AWAY CLUB
 Officiel A: Coach Away
 N  Licence   Nom Prenom       B  B7m  T  A  AV  2MN  D
-15 5555555   Nora Arriere     4  0    9  0  0   1
+15 5555555   ARRIERE Nora     4  0    9  0  0   1    0
 
 Historique
 Periode Temps Score Cote Action

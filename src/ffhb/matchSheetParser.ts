@@ -9,10 +9,12 @@ import type {
   TeamSide,
 } from "../domain/extraction.js";
 import { inferMatchUrlContext } from "./matchUrl.js";
+import { splitPlayerName } from "./playerName.js";
 
 export interface MatchSheetParseContext {
   matchUrl: string;
   pdfUrl?: string;
+  playerStatsByLicence?: ReadonlyMap<string, MatchPlayerStats>;
 }
 
 interface TeamSection {
@@ -28,7 +30,7 @@ export function parseMatchSheetText(text: string, context: MatchSheetParseContex
   const header = parseHeader(lines);
   const teams = parseTeams(lines, header);
   const periods = parseScorePeriods(lines);
-  const sections = parseTeamSections(lines, teams, warnings);
+  const sections = parseTeamSections(lines, teams, warnings, context.playerStatsByLicence);
   const players = sections.flatMap((section) => section.players);
   const timeline = linkTimelineEvents(parseTimeline(lines, warnings), players);
   const urlContext = inferMatchUrlContext(context.matchUrl);
@@ -73,7 +75,10 @@ export function parseMatchSheetText(text: string, context: MatchSheetParseContex
     officials: parseOfficials(lines),
     tableOfficials: parseTableOfficials(lines, warnings),
     staff: parseStaff(lines, sections),
-    players,
+    players: {
+      home: players.filter((player) => player.teamSide === "home"),
+      away: players.filter((player) => player.teamSide === "away"),
+    },
     timeline,
     pdf: {
       available: true,
@@ -105,12 +110,13 @@ export function matchDetailsToIndexedText(details: MatchDetails): string {
     details.venue?.address,
     ...details.officials.map((official) => `${official.role} ${official.name}`),
     ...details.tableOfficials.map((official) => `${official.role} ${official.name}`),
-    ...details.staff.map((official) => `${official.role} ${official.teamSide ?? ""} ${official.name}`),
-    ...details.players.map((player) =>
+    ...[...details.staff.home, ...details.staff.away].map((official) => `${official.role} ${official.teamSide ?? ""} ${official.name}`),
+    ...[...details.players.home, ...details.players.away].map((player) =>
       [
         player.teamSide,
         player.number,
-        player.name,
+        player.firstName,
+        player.lastName,
         `goals ${player.stats.goals}`,
         `seven_meter_goals ${player.stats.sevenMeterGoals}`,
         `shots ${player.stats.shots}`,
@@ -164,8 +170,8 @@ function parseHeader(lines: string[]): {
     header.matchCode ??= capture(line, /^Code rencontre:?\s+([A-Z0-9-]+)$/i);
     header.fdmCode ??= capture(line, /^Code FDM:?\s+([A-Z0-9-]+)$/i) ?? capture(line, /\bCode Renc\s+([A-Z0-9-]+)\b/i);
     header.status ??= capture(line, /^Statut(?: Match)?\s*:?\s*(.+)$/i);
-    header.scheduledAt ??= capture(line, /^Date:?\s+(.+)$/i) ?? capture(line, /^DATE:\s+(.+?)(?:\s+Journ[ée]e\b.*)?$/i);
-    header.venue ??= capture(line, /^Lieu:?\s+(.+)$/i) ?? capture(line, /\bSALLE:\s+(.+)$/i);
+    header.scheduledAt ??= capture(line, /^Date:?\s+(.+?)(?:\s+(?:Journ[ée]e|Salle)\b.*)?$/i);
+    header.venue ??= capture(line, /^Lieu:?\s+(.+)$/i) ?? capture(line, /\bSALLE:?\s+(.+)$/i);
 
     const fixtureScore = line.match(/^Score final:\s+.+?\s+(\d+)\s*-\s*(\d+)\s+.+$/i);
     if (fixtureScore) {
@@ -270,6 +276,7 @@ function parseTeamSections(
   lines: string[],
   teams: { home: string | null; away: string | null },
   warnings: string[],
+  playerStatsByLicence?: ReadonlyMap<string, MatchPlayerStats>,
 ): TeamSection[] {
   const sections: TeamSection[] = [];
   let current: TeamSection | null = null;
@@ -293,7 +300,8 @@ function parseTeamSections(
 
     if (liveSide) {
       const side = normalizeSide(liveSide[1]);
-      const label = previousNonCodeLine(lines, index) ?? (side === "home" ? teams.home : teams.away);
+      // The old PDF places the name before this marker; the new PDF places it after.
+      const label = (side === "home" ? teams.home : teams.away) ?? previousNonCodeLine(lines, index);
       if (!side || !label) {
         current = null;
         continue;
@@ -308,7 +316,7 @@ function parseTeamSections(
       continue;
     }
 
-    if (/^(DETAIL|Historique|Déroulé|Deroule)\b/i.test(line)) {
+    if (/^(D[ée]tail|Historique|Déroulé|Deroule)\b/i.test(line)) {
       current = null;
       continue;
     }
@@ -317,7 +325,7 @@ function parseTeamSections(
       continue;
     }
 
-    const player = parsePlayerLine(line, current);
+    const player = parsePlayerLine(line, current, playerStatsByLicence);
     if (player) {
       current.players.push(player);
     } else if (/^\d+\s+/.test(line) || /^X\s+\d+\s+/.test(line)) {
@@ -328,7 +336,9 @@ function parseTeamSections(
   return sections.filter((section) => section.players.length > 0);
 }
 
-function parsePlayerLine(line: string, section: TeamSection): MatchPlayer | null {
+function parsePlayerLine(
+  line: string, section: TeamSection, playerStatsByLicence?: ReadonlyMap<string, MatchPlayerStats>,
+): MatchPlayer | null {
   const tokens = line.split(/\s+/).filter(Boolean);
   let cursor = 0;
   if (tokens[cursor] === "X") {
@@ -353,54 +363,42 @@ function parsePlayerLine(line: string, section: TeamSection): MatchPlayer | null
   );
   const nameEnd = fixtureLayout ? (statStart === -1 ? tokens.length : statStart) : licenceIndex;
   const nameTokens = tokens.slice(nameStart, nameEnd);
-  if (/^[A-Z]{1,3}$/.test(nameTokens.at(-1) ?? "")) {
-    nameTokens.pop();
-  }
-
-  const name = toName(nameTokens.join(" "));
-  if (!name) {
+  const playerName = splitPlayerName(nameTokens.join(" "));
+  if (!playerName.firstName && !playerName.lastName) {
     return null;
   }
 
   const statTokens = statStart === -1 ? [] : tokens.slice(statStart);
-  const stats = parsePlayerStats(statTokens);
+  const stats = playerStatsByLicence
+    ? playerStatsByLicence.get(tokens[licenceIndex])
+    : parsePlayerStats(statTokens);
+  if (!stats) return null;
 
   return {
     id: `${section.side}:${number}`,
     teamSide: section.side,
     originalSide: section.originalSide,
     number,
-    name,
+    ...playerName,
     stats,
     disqualified: stats.disqualifications > 0,
   };
 }
 
-function parsePlayerStats(tokens: string[]): MatchPlayerStats {
-  const stats = tokens.filter((token) => /^\d+$|^X$|^D$/i.test(token));
-  const numeric = stats.map((token) => (/^X$|^D$/i.test(token) ? 1 : Number.parseInt(token, 10)));
-  const disqualified = stats.some((token) => /^X$|^D$/i.test(token)) ? 1 : (numeric[6] ?? 0);
-
-  if (stats.length === 5 && /^X$|^D$/i.test(stats[4] ?? "")) {
-    return {
-      goals: numeric[0] ?? 0,
-      sevenMeterGoals: numeric[1] ?? 0,
-      shots: 0,
-      saves: numeric[2] ?? 0,
-      warnings: numeric[3] ?? 0,
-      twoMinuteSuspensions: 0,
-      disqualifications: disqualified,
-    };
-  }
-
+function parsePlayerStats(tokens: string[]): MatchPlayerStats | null {
+  // Without PDF positions, accept only seven explicit cells. Sparse plain text
+  // has lost its blank columns and cannot be assigned statistics reliably.
+  if (tokens.length !== 7 || tokens.some((token) => !/^\d+$|^X$|^D$/i.test(token))) return null;
+  if (tokens.slice(0, 4).some((token) => !/^\d+$/.test(token))) return null;
+  const numeric = tokens.map((token) => (/^X$|^D$/i.test(token) ? 1 : Number.parseInt(token, 10)));
   return {
-    goals: numeric[0] ?? 0,
-    sevenMeterGoals: numeric[1] ?? 0,
-    shots: numeric[2] ?? 0,
-    saves: numeric[3] ?? 0,
-    warnings: numeric[4] ?? 0,
-    twoMinuteSuspensions: numeric[5] ?? 0,
-    disqualifications: disqualified,
+    goals: numeric[0],
+    sevenMeterGoals: numeric[1],
+    shots: numeric[2],
+    saves: numeric[3],
+    warnings: numeric[4],
+    twoMinuteSuspensions: numeric[5],
+    disqualifications: numeric[6],
   };
 }
 
@@ -417,7 +415,7 @@ function parseTableOfficials(lines: string[], warnings: string[]): MatchOfficial
     [/Secr[ée]taire:?\s+(.+?)(?:\s+Juge Arbitre\b.*)?$/i, "secretaire"],
     [/Tuteur de Table:?\s+(.+)$/i, "tuteur_de_table"],
     [/Accompagnateur:?\s+(.+)$/i, "accompagnateur"],
-    [/Responsable de Salle:?\s+(.+)$/i, "responsable_de_salle"],
+    [/(?:Responsable|Resp\.) de Salle:?\s+(.+)$/i, "responsable_de_salle"],
     [/Juge D[ée]l[ée]gu[ée]:?\s+(.+)$/i, "juge_delegue"],
     [/Speaker:?\s+(.+?)(?:\s+D[ée]l[ée]gu[ée] Officiel\b.*)?$/i, "speaker"],
     [/D[ée]l[ée]gu[ée] Officiel:?\s+(.+)$/i, "delegue_officiel"],
@@ -463,8 +461,8 @@ function pushUniqueOfficial(officials: MatchOfficial[], official: MatchOfficial)
   }
 }
 
-function parseStaff(lines: string[], sections: TeamSection[]): MatchOfficial[] {
-  const staff: MatchOfficial[] = [];
+function parseStaff(lines: string[], sections: TeamSection[]): MatchDetails["staff"] {
+  const staff: MatchDetails["staff"] = { home: [], away: [] };
   let current: TeamSection | null = null;
 
   for (const line of lines) {
@@ -495,7 +493,7 @@ function parseStaff(lines: string[], sections: TeamSection[]): MatchOfficial[] {
       continue;
     }
 
-    const match = line.match(/^Officiel(?:\s+Resp)?\s*([A-D])?:?\s+(.+)$/i);
+    const match = line.match(/^Officiel(?:\s+Resp\.?)?\s*([A-D])?:?\s+(.+)$/i);
     if (!match) {
       continue;
     }
@@ -505,7 +503,7 @@ function parseStaff(lines: string[], sections: TeamSection[]): MatchOfficial[] {
       continue;
     }
 
-    staff.push({
+    staff[current.side].push({
       role: match[1] ? `officiel_${match[1].toLowerCase()}` : "officiel_responsable",
       name,
       teamSide: current.side,
@@ -522,7 +520,7 @@ function parseTimeline(lines: string[], warnings: string[]): MatchTimelineEvent[
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const periodMatch = line.match(/^PERIODE\s+(\d+)$/i);
+    const periodMatch = line.match(/^P[ÉE]RIODE\s+(\d+)$/i);
     if (periodMatch) {
       period = Number.parseInt(periodMatch[1], 10);
       continue;
@@ -534,16 +532,18 @@ function parseTimeline(lines: string[], warnings: string[]): MatchTimelineEvent[
       continue;
     }
 
-    const live = line.match(/^(\d{2}:\d{2})\s+(\d{2}\s*-\s*\d{2})$/);
+    const live = line.match(/^(\d{2}:\d{2})\s+(\d+\s*-\s*\d+)(?:\s+(.+))?$/);
     if (live) {
-      const action = lines[index + 1] ?? "";
+      const action = live[3] ?? lines[index + 1] ?? "";
       if (!action || /^-- \d+ of \d+ --$/.test(action)) {
         warnings.push(`Unable to parse timeline row: ${line}`);
         continue;
       }
 
-      events.push(buildTimelineEvent(period, live[1], live[2], null, action, `${line} ${action}`));
-      index += 1;
+      events.push(buildTimelineEvent(period, live[1], live[2], null, action, live[3] ? line : `${line} ${action}`));
+      if (!live[3]) {
+        index += 1;
+      }
     }
   }
 
@@ -563,6 +563,11 @@ function buildTimelineEvent(
   const player =
     actionText.match(/N[°o]?\s*(\d{1,3})\s+(.+)$/i) ??
     actionText.match(/^(?:But 7m|But|Tir|Arr[êe]t|Avertissement|2MN|Disqualification)\s+(\d{1,3})\s+(.+)$/i);
+  // The 2026 engine prints names without shirt numbers or team markers.
+  // Keep the name, but leave the roster link unset without those identifiers.
+  const unnumberedPlayer = !player && !actionSide
+    ? actionText.match(/^(?:But(?:\s+7m)?|Tir(?:\s+non-cadr[ée])?|Arr[êe]t|Avertissement|2MN|Disqualification)\s+(.+)$/i)
+    : null;
 
   return {
     period,
@@ -573,7 +578,7 @@ function buildTimelineEvent(
     type: normalizeEventType(actionText),
     actionText,
     playerNumber: player?.[1] ?? null,
-    playerName: player ? toName(player[2]) : null,
+    playerName: player ? toName(player[2]) : unnumberedPlayer ? toName(unnumberedPlayer[1]) : null,
     playerId: null,
     raw,
   };
@@ -642,6 +647,7 @@ function normalizeSide(value: string | null | undefined): TeamSide | null {
 function normalizeLines(text: string): string[] {
   return text
     .replace(/\r/g, "\n")
+    .replace(/^Club\s*\n\s*(recevant|visiteur)\s*$/gim, "Club $1")
     .split("\n")
     .map((line) => line.replace(/\t/g, " ").replace(/\s+/g, " ").trim())
     .filter((line) => line && !/^-- \d+ of \d+ --$/.test(line));
@@ -693,7 +699,7 @@ function looksLikeFdmCode(value: string | undefined): value is string {
 }
 
 function isPlaceholderRoleName(value: string): boolean {
-  return /^(Juge|Resp|A|B|C|D|Officiel|D[ée]l[ée]gu[ée](?: Officiel)?|Speaker)$/i.test(stripAccents(value).trim());
+  return /^(Juge(?: accomp\.)?|Resp|A|B|C|D|Officiel|D[ée]l[ée]gu[ée](?: Officiel)?|Speaker)$/i.test(stripAccents(value).trim());
 }
 
 function stripAccents(value: string): string {
