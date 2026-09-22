@@ -46,8 +46,10 @@ Prompt:
 
 ## Setup
 
+Requires Node.js 24.12.0 or newer within the Node.js 24 release line, with npm.
+
 ```bash
-npm install
+npm ci
 npm run build
 ```
 
@@ -80,3 +82,15 @@ npm run test
 ```
 
 The first implementation intentionally uses a JSON-file store. That keeps the MCP usable immediately while leaving a clear boundary for replacing storage with SQLite, Meilisearch, Typesense, or another search backend later.
+
+## Packaging
+
+The npm package is named `@nicobuchet/ffhb-mcp` and exposes the `ffhb-mcp`
+executable. Run `npm pack` to create a local package archive. The `prepack` hook
+builds the application automatically; the archive includes `dist/src`, package
+metadata, the MIT licence, and this README. Tests, fixtures, and local index data
+are excluded.
+
+## Licence
+
+[MIT](LICENSE).

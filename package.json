@@ -1,19 +1,32 @@
 {
-  "name": "ffhb-mcp",
+  "name": "@nicobuchet/ffhb-mcp",
   "version": "0.1.0",
   "description": "MCP server for indexing and exposing data from the FFHandball website.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicobuchet/ffhb-mcp.git"
+  },
+  "homepage": "https://github.com/nicobuchet/ffhb-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/nicobuchet/ffhb-mcp/issues"
+  },
   "type": "module",
+  "files": [
+    "dist/src"
+  ],
   "bin": {
     "ffhb-mcp": "./dist/src/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "dev": "tsx src/index.ts",
     "start": "node dist/src/index.js",
     "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
   },
   "engines": {
-    "node": ">=20.16.0"
+    "node": "^24.12.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
