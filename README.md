@@ -19,8 +19,10 @@ TypeScript MCP server for helping AI agents fetch, index, and search content fro
 Tools:
 
 - `ffhb_list_seasons`: list live FFHandball seasons and the competition type URLs available under each one.
-- `ffhb_search_competitions`: search live FFHandball competitions with optional query, season URL, competition type, and limit filters.
-- `ffhb_get_competition`: inspect one competition and expose metadata plus available phase navigation items.
+- `ffhb_list_regions`: list the organizing regions/leagues available in a season, with their season-specific navigation URLs.
+- `ffhb_list_departments`: list the organizing departments/committees available in a season, with their season-specific navigation URLs.
+- `ffhb_search_competitions`: search live FFHandball competitions with optional query, season URL, competition type, territory URL, and limit filters.
+- `ffhb_get_competition`: inspect one competition and expose metadata, its owning region or department, and available phase navigation items.
 - `ffhb_list_poules`: list poules for a competition, optionally restricted to a phase URL returned by `ffhb_get_competition`.
 - `ffhb_list_journees`: list journees for a poule URL returned by `ffhb_list_poules`.
 - `ffhb_get_standings`: get normalized standings for a poule URL returned by `ffhb_list_poules`.
@@ -43,6 +45,44 @@ Resources:
 Prompt:
 
 - `ffhb-research-plan`: starts a focused research workflow around the indexed FFHandball data.
+
+### Regions, departments, and seasons
+
+Both territory list tools accept an optional `seasonUrl` from `ffhb_list_seasons`.
+They return the resolved `seasonUrl`, a `regions` or `departments` array, and
+`warnings`. Each territory has `id`, `label`, `url`, `parentUrl`, `seasonUrl`,
+`competitionType`, and `externalId`. Its canonical navigation URL is its `id`;
+`externalId` identifies the FFHandball organizing structure.
+
+Pass a territory's `url` as `territoryUrl` to `ffhb_search_competitions` to search
+within it. Without a territory filter, search visits all territories for the
+selected competition types in that season. Regional results include a `region`
+reference; departmental results include a `department` reference. Competition
+details expose the same references without requiring a prior search. Departmental
+competitions do not additionally expose their department's parent region. If
+ownership is missing from a competition page, its reference is omitted with a
+warning.
+
+An explicit `seasonUrl` takes precedence and must match the season in any
+`territoryUrl`. When omitted, search inherits the territory URL's season. With
+neither input, search and territory discovery use FFHandball's live current season.
+The resolved season is returned in list responses and search `filters.seasonUrl`.
+Contradictory season or competition-type inputs are errors. Historical requests
+always use historical territory lists; unavailable data never triggers a fallback
+to another season.
+
+For example, list regions with `ffhb_list_regions` using
+`{"seasonUrl":"https://www.ffhandball.fr/competitions/saison-2025-2026-21/"}`,
+then search with `{"territoryUrl":"<url returned by that list>"}`. The search
+remains in 2025–26 even when FFHandball's current season changes. Territory URLs
+contain an `o-` prefix and are distinct from the competition URLs returned by search.
+
+Search returns `complete: false` when an individual territory cannot be fetched or
+interpreted, retaining results from other territories and warnings naming the
+failed territory and URL. A failure to establish the season or its territory list
+is an error. `complete: true` means all requested sources were covered; `limit`
+still caps the number of returned matches. Broad searches can therefore take
+longer than searches restricted to one territory.
 
 ## Setup
 

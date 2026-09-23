@@ -13,6 +13,23 @@ export interface ToolDependencies {
 }
 
 export function registerTools(server: McpServer, dependencies: ToolDependencies): void {
+  for (const kind of ["regions", "departments"] as const) {
+    server.registerTool(
+      `ffhb_list_${kind}`,
+      {
+        title: `List FFHandball ${kind}`,
+        description: `List available ${kind} and their season-specific URLs. Defaults to FFHandball's current season.`,
+        inputSchema: { seasonUrl: z.string().min(1).optional().describe("Season URL returned by ffhb_list_seasons.") },
+      },
+      async ({ seasonUrl }) => {
+        const output = kind === "regions"
+          ? await dependencies.client.listRegions(seasonUrl)
+          : await dependencies.client.listDepartments(seasonUrl);
+        return { content: [{ type: "text", text: jsonText(output) }], structuredContent: output };
+      },
+    );
+  }
+
   server.registerTool(
     "ffhb_list_seasons",
     {
@@ -34,19 +51,21 @@ export function registerTools(server: McpServer, dependencies: ToolDependencies)
     "ffhb_search_competitions",
     {
       title: "Search FFHandball competitions",
-      description: "Search live FFHandball competitions with optional query, season URL, competition type, and limit filters.",
+      description: "Search live competitions, optionally by query, season, competition type, territory URL, and limit. Without a territory filter, search all territories in the season. Inherit the season from territoryUrl when omitted; otherwise default to the current season. Conflicting inputs are errors. Territory failures return partial results with complete: false and warnings.",
       inputSchema: {
         query: z.string().min(1).optional(),
         seasonUrl: z.string().min(1).optional(),
         competitionType: z.string().min(1).optional(),
+        territoryUrl: z.string().min(1).optional().describe("Season-specific region or department URL returned by ffhb_list_regions or ffhb_list_departments. Supplies the season when seasonUrl is omitted."),
         limit: z.number().int().min(COMPETITION_SEARCH_LIMIT_MIN).max(COMPETITION_SEARCH_LIMIT_MAX).default(10),
       },
     },
-    async ({ query, seasonUrl, competitionType, limit }) => {
+    async ({ query, seasonUrl, competitionType, territoryUrl, limit }) => {
       const output = await dependencies.client.searchCompetitions({
         query,
         seasonUrl,
         competitionType,
+        territoryUrl,
         limit,
       });
 
@@ -61,7 +80,7 @@ export function registerTools(server: McpServer, dependencies: ToolDependencies)
     "ffhb_get_competition",
     {
       title: "Get FFHandball competition",
-      description: "Inspect one FFHandball competition and list its metadata plus available phases.",
+      description: "Inspect one FFHandball competition, including its season-specific region or department when available, and list available phases.",
       inputSchema: {
         competitionUrl: z.string().min(1).describe("Canonical FFHandball competition URL."),
       },
