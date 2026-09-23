@@ -12,14 +12,28 @@ export interface SeasonNavigationItem extends NavigationItem {
   competitionTypes: NavigationItem[];
 }
 
+export type TerritoryCompetitionType = "REGIONAL" | "DEPARTEMENTAL";
+
+export interface TerritoryNavigationItem extends NavigationItem {
+  seasonUrl: string;
+  competitionType: TerritoryCompetitionType;
+  externalId: string;
+}
+
 export interface CompetitionSearchFilters {
   query?: string;
   seasonUrl?: string;
   competitionType?: string;
+  territoryUrl?: string;
   limit?: number;
 }
 
-export interface CompetitionSearchResult extends NavigationItem {
+export interface CompetitionOwnership {
+  region?: TerritoryNavigationItem;
+  department?: TerritoryNavigationItem;
+}
+
+export interface CompetitionSearchResult extends NavigationItem, CompetitionOwnership {
   competitionType: string;
 }
 
@@ -28,10 +42,11 @@ export interface CompetitionNavigation {
   currentSeasonUrl: string | null;
   competitionTypes: NavigationItem[];
   competitions: CompetitionSearchResult[];
+  territories: TerritoryNavigationItem[];
   warnings: string[];
 }
 
-export interface CompetitionMetadata extends NavigationItem {
+export interface CompetitionMetadata extends NavigationItem, CompetitionOwnership {
   seasonUrl: string;
   competitionType: string;
   externalId: string;

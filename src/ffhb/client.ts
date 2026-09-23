@@ -16,12 +16,15 @@ import {
   type PouleListFilters,
   type PouleNavigationItem,
   type SeasonNavigationItem,
+  type TerritoryCompetitionType,
 } from "../domain/navigation.js";
 import {
   competitionTypeSlug,
+  inferSeasonUrl,
   normalizeCompetitionType,
   parseCompetitionDetails,
   parseCompetitionNavigation,
+  territoryUrlMetadata,
 } from "./navigationParser.js";
 import { parseStandingsExtraction } from "./extractionParser.js";
 import { errorMessage } from "./errors.js";
@@ -135,13 +138,39 @@ export class FfhbClient {
     };
   }
 
+  async listRegions(seasonUrl?: string) {
+    const result = await this.listTerritories("REGIONAL", seasonUrl);
+    return { seasonUrl: result.seasonUrl, regions: result.territories, warnings: result.warnings };
+  }
+
+  async listDepartments(seasonUrl?: string) {
+    const result = await this.listTerritories("DEPARTEMENTAL", seasonUrl);
+    return { seasonUrl: result.seasonUrl, departments: result.territories, warnings: result.warnings };
+  }
+
+  private async listTerritories(type: TerritoryCompetitionType, inputSeasonUrl?: string) {
+    const requestedSeason = inputSeasonUrl !== undefined ? this.resolveSeasonUrl(inputSeasonUrl) : undefined;
+    const entry = await this.fetchCompetitionNavigation(requestedSeason ?? "/competitions/");
+    const seasonUrl = requestedSeason
+      ? requestedSeason
+      : entry.currentSeasonUrl;
+    if (!seasonUrl) throw new Error("Unable to determine the FFHandball season URL.");
+    if (!entry.competitionTypes.some((item) => normalizeCompetitionType(item.label) === type)) {
+      throw new Error(`Competition type is not available for ${seasonUrl}: ${type}`);
+    }
+    const navigation = await this.fetchCompetitionNavigation(new URL(`${competitionTypeSlug(type)}/`, seasonUrl).href);
+    return { seasonUrl, territories: navigation.territories, warnings: [...entry.warnings, ...navigation.warnings] };
+  }
+
   async searchCompetitions(filters: CompetitionSearchFilters = {}): Promise<{
     query: string | null;
     filters: Required<Pick<CompetitionSearchFilters, "limit">> & {
       seasonUrl: string | null;
       competitionType: string | null;
+      territoryUrl: string | null;
     };
     results: CompetitionSearchResult[];
+    complete: boolean;
     warnings: string[];
   }> {
     const limit = filters.limit ?? 10;
@@ -151,9 +180,24 @@ export class FfhbClient {
       );
     }
 
-    const entryNavigation = await this.fetchCompetitionNavigation(filters.seasonUrl ?? "/competitions/");
-    const seasonUrl = filters.seasonUrl
-      ? resolveAllowedUrl(filters.seasonUrl, this.options.urlPolicy).href
+    const territoryUrl = filters.territoryUrl
+      ? resolveAllowedUrl(filters.territoryUrl, this.options.urlPolicy)
+      : null;
+    const territory = territoryUrl ? territoryUrlMetadata(territoryUrl) : null;
+    if (territoryUrl && !territory) throw new Error(`Expected a canonical territory URL: ${territoryUrl.href}`);
+    const requestedSeason = filters.seasonUrl !== undefined
+      ? this.resolveSeasonUrl(filters.seasonUrl)
+      : territory?.seasonUrl;
+    if (territory && requestedSeason !== territory.seasonUrl) {
+      throw new Error("Season inputs conflict: territoryUrl and seasonUrl must belong to the same season.");
+    }
+    if (territory && filters.competitionType !== undefined && normalizeCompetitionType(filters.competitionType) !== territory.competitionType) {
+      throw new Error("Competition type conflicts with the selected territory.");
+    }
+
+    const entryNavigation = await this.fetchCompetitionNavigation(requestedSeason ?? "/competitions/");
+    const seasonUrl = requestedSeason
+      ? requestedSeason
       : entryNavigation.currentSeasonUrl;
 
     if (!seasonUrl) {
@@ -163,6 +207,7 @@ export class FfhbClient {
     const typeFilters =
       filters.competitionType !== undefined
         ? [normalizeCompetitionType(filters.competitionType)]
+        : territory ? [territory.competitionType]
         : entryNavigation.competitionTypes.map((competitionType) => normalizeCompetitionType(competitionType.label));
 
     if (typeFilters.length === 0) {
@@ -184,11 +229,32 @@ export class FfhbClient {
 
     const warnings = [...entryNavigation.warnings];
     const competitions: CompetitionSearchResult[] = [];
+    let complete = true;
 
     for (const competitionType of typeFilters) {
       const typeUrl = new URL(`${competitionTypeSlug(competitionType)}/`, seasonUrl).href;
       const navigation = await this.fetchCompetitionNavigation(typeUrl);
       warnings.push(...navigation.warnings);
+
+      if (competitionType === "REGIONAL" || competitionType === "DEPARTEMENTAL") {
+        const territories = territoryUrl
+          ? navigation.territories.filter((item) => item.url === territoryUrl.href)
+          : navigation.territories;
+        if (territoryUrl && territories.length === 0) {
+          throw new Error(`Territory is not available for ${seasonUrl}: ${territoryUrl.href}`);
+        }
+        for (const territory of territories) {
+          try {
+            const territoryNavigation = await this.fetchCompetitionNavigation(territory.url);
+            warnings.push(...territoryNavigation.warnings);
+            competitions.push(...territoryNavigation.competitions);
+          } catch (error) {
+            complete = false;
+            warnings.push(`Unable to search ${territory.label} (${territory.url}): ${errorMessage(error)}`);
+          }
+        }
+        continue;
+      }
 
       if (navigation.competitions.length === 0) {
         warnings.push(`No competitions were embedded at ${typeUrl}`);
@@ -206,10 +272,12 @@ export class FfhbClient {
       query: query || null,
       filters: {
         seasonUrl,
-        competitionType: filters.competitionType ? normalizeCompetitionType(filters.competitionType) : null,
+        competitionType: filters.competitionType ? normalizeCompetitionType(filters.competitionType) : territory?.competitionType ?? null,
+        territoryUrl: territoryUrl?.href ?? null,
         limit,
       },
       results,
+      complete,
       warnings,
     };
   }
@@ -420,6 +488,15 @@ export class FfhbClient {
   private async fetchCompetitionNavigation(inputUrl: string) {
     const { html, url } = await this.fetchHtml(inputUrl);
     return parseCompetitionNavigation(html, url);
+  }
+
+  private resolveSeasonUrl(input: string): string {
+    const url = resolveAllowedUrl(input, this.options.urlPolicy);
+    if (!url.pathname.endsWith("/")) url.pathname += "/";
+    if (url.search || inferSeasonUrl(url) !== url.href) {
+      throw new Error(`Expected a canonical season URL: ${input}`);
+    }
+    return url.href;
   }
 
   private async fetchCompetitionDetails(inputUrl: string): Promise<CompetitionDetails> {

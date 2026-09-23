@@ -11,6 +11,7 @@ import type {
   NavigationItem,
   PouleNavigationItem,
   SeasonNavigationItem,
+  TerritoryNavigationItem,
 } from "../domain/navigation.js";
 import { errorMessage } from "./errors.js";
 import { collectComponentData } from "./smartfireComponents.js";
@@ -38,6 +39,7 @@ const COMPETITION_TYPE_LABELS = new Map<string, string>([
 export function parseCompetitionNavigation(html: string, pageUrl: URL): CompetitionNavigation {
   const warnings: string[] = [];
   const componentData = collectComponentData(html, COMPETITION_COMPONENT_NAMES, warnings);
+  assertPageSeason(componentData, pageUrl);
 
   if (componentData.length === 0) {
     throw new Error(`Unable to interpret FFHandball competition navigation from ${pageUrl.href}`);
@@ -68,13 +70,49 @@ export function parseCompetitionNavigation(html: string, pageUrl: URL): Competit
     currentSeasonUrl,
     competitionTypes,
     competitions,
+    territories: collectTerritories(componentData, pageUrl),
     warnings,
   };
+}
+
+function collectTerritories(componentData: unknown[], pageUrl: URL): TerritoryNavigationItem[] {
+  const type = inferCompetitionType(pageUrl);
+  if (type !== "REGIONAL" && type !== "DEPARTEMENTAL") return [];
+  const source = componentData.find((item) => isRecord(item) && Array.isArray(item.structures));
+  if (!isRecord(source) || !Array.isArray(source.structures)) {
+    throw new Error(`Unable to interpret territory list at ${pageUrl.href}`);
+  }
+  const territories = new Map<string, TerritoryNavigationItem>();
+  for (const structure of source.structures) {
+    const territory = isRecord(structure) ? buildTerritory(structure, pageUrl) : null;
+    if (!territory) throw new Error(`Malformed territory in list at ${pageUrl.href}`);
+    territories.set(territory.url, territory);
+  }
+  return [...territories.values()];
+}
+
+function buildTerritory(structure: Record<string, unknown>, pageUrl: URL): TerritoryNavigationItem | null {
+  const type = inferCompetitionType(pageUrl);
+  const season = inferSeasonUrl(pageUrl);
+  if (!season || (type !== "REGIONAL" && type !== "DEPARTEMENTAL")) return null;
+  const parentUrl = competitionTypeUrl(season, competitionTypeSlug(type));
+  const label = stringValue(structure.libelle);
+  const externalId = stringValue(structure.ext_structureId);
+  const structureType = stringValue(structure.type);
+  if (!label || !/^\d+$/.test(externalId) || (structureType && structureType !== (type === "REGIONAL" ? "LIG" : "COM"))) return null;
+  const url = new URL(`o-${slugify(label)}-${externalId}/`, parentUrl).href;
+  return { id: url, label, url, parentUrl, seasonUrl: season, competitionType: type, externalId };
+}
+
+function territoryOwnership(territory: TerritoryNavigationItem | null) {
+  if (!territory) return {};
+  return territory.competitionType === "REGIONAL" ? { region: territory } : { department: territory };
 }
 
 export function parseCompetitionDetails(html: string, pageUrl: URL): CompetitionDetails {
   const warnings: string[] = [];
   const componentData = collectComponentData(html, COMPETITION_DETAILS_COMPONENT_NAMES, warnings);
+  assertPageSeason(componentData, pageUrl);
 
   if (componentData.length === 0) {
     throw new Error(`Unable to interpret FFHandball competition details from ${pageUrl.href}`);
@@ -83,6 +121,11 @@ export function parseCompetitionDetails(html: string, pageUrl: URL): Competition
   const competition = buildCompetitionMetadata(componentData, pageUrl);
   if (!competition) {
     throw new Error(`Unable to interpret FFHandball competition details from ${pageUrl.href}`);
+  }
+
+  if ((competition.competitionType === "REGIONAL" || competition.competitionType === "DEPARTEMENTAL")
+    && !competition.region && !competition.department) {
+    warnings.push(`Unable to establish the owning territory for ${competition.url}`);
   }
 
   const phases = buildPhaseItems(findFirstRecordArray(componentData, "phases"), competition.url);
@@ -124,6 +167,16 @@ export function normalizeCompetitionType(competitionType: string): string {
     .replace(/\p{Diacritic}/gu, "")
     .replace(/[-\s]+/g, "_")
     .toUpperCase();
+}
+
+export function territoryUrlMetadata(url: URL): Pick<TerritoryNavigationItem, "seasonUrl" | "competitionType" | "externalId"> | null {
+  const match = url.pathname.match(/^(\/competitions\/saison-\d{4}-\d{4}-\d+\/)(regional|departemental)\/o-[^/]+-(\d+)\/$/);
+  if (!match || url.search) return null;
+  return {
+    seasonUrl: new URL(match[1], url).href,
+    competitionType: match[2] === "regional" ? "REGIONAL" : "DEPARTEMENTAL",
+    externalId: match[3],
+  };
 }
 
 function buildSeasonItems(
@@ -192,12 +245,28 @@ function collectCompetitions(componentData: unknown[], pageUrl: URL): Competitio
   const competitions: CompetitionSearchResult[] = [];
   const seen = new Set<string>();
   const selectedType = inferCompetitionType(pageUrl);
+  const requestedTerritory = territoryUrlMetadata(pageUrl);
+  const selectedStructure = findFirstObject(componentData, "structure");
+  const selectedTerritory = selectedStructure ? buildTerritory(selectedStructure, pageUrl) : null;
+  if (requestedTerritory) {
+    if (selectedTerritory?.url !== pageUrl.href) {
+      throw new Error(`Selected territory does not match ${pageUrl.href}`);
+    }
+    if (!componentData.some((item) => isRecord(item) && Array.isArray(item.competitions))) {
+      throw new Error(`Unable to interpret territory competitions at ${pageUrl.href}`);
+    }
+  }
 
-  for (const rawCompetition of findFirstRecordArray(componentData, "competitions")) {
+  for (const rawCompetition of findFirstArray(componentData, "competitions")) {
+    if (!isRecord(rawCompetition)) {
+      if (requestedTerritory) throw new Error(`Malformed competition at ${pageUrl.href}`);
+      continue;
+    }
     const label = stringValue(rawCompetition.libelle);
     const externalId = stringValue(rawCompetition.ext_competitionId);
     const competitionType = normalizeCompetitionType(stringValue(rawCompetition.type) || selectedType);
-    if (!label || !externalId || !competitionType) {
+    if (!label || !externalId || !competitionType || (requestedTerritory && !/^\d+$/.test(externalId))) {
+      if (requestedTerritory) throw new Error(`Malformed competition at ${pageUrl.href}`);
       continue;
     }
 
@@ -208,12 +277,22 @@ function collectCompetitions(componentData: unknown[], pageUrl: URL): Competitio
     }
 
     seen.add(url);
+    const structureId = stringValue(rawCompetition.structureId);
+    const structure = structureId
+      ? findFirstRecordArray(componentData, "structures").find((item) => item.id === structureId)
+        ?? (selectedStructure?.id === structureId ? selectedStructure : null)
+      : selectedStructure;
+    const owner = structure ? buildTerritory(structure, pageUrl) : null;
+    if (requestedTerritory && (competitionType !== selectedType || owner?.url !== pageUrl.href)) {
+      throw new Error(`Competition ${externalId} does not belong to territory ${pageUrl.href}`);
+    }
     competitions.push({
       id: url,
       label,
       url,
       parentUrl,
       competitionType,
+      ...territoryOwnership(owner),
     });
   }
 
@@ -243,7 +322,27 @@ function buildCompetitionMetadata(componentData: unknown[], pageUrl: URL): Compe
     seasonUrl: metadata.seasonUrl,
     competitionType: metadata.competitionType,
     externalId: metadata.externalId,
+    ...territoryOwnership(findTerritoryBreadcrumb(header, new URL(url))),
   };
+}
+
+function findTerritoryBreadcrumb(header: Record<string, unknown> | undefined, competitionUrl: URL): TerritoryNavigationItem | null {
+  if (!Array.isArray(header?.breadcrumb)) return null;
+  for (const crumb of header.breadcrumb.filter(isRecord)) {
+    const label = stringValue(crumb.label);
+    const rawUrl = stringValue(crumb.url);
+    if (!label || !rawUrl) continue;
+    const url = new URL(rawUrl, competitionUrl);
+    const metadata = territoryUrlMetadata(url);
+    if (!metadata || metadata.seasonUrl !== inferSeasonUrl(competitionUrl)
+      || metadata.competitionType !== inferCompetitionType(competitionUrl)) continue;
+    return {
+      id: url.href, label, url: url.href,
+      parentUrl: competitionTypeUrl(metadata.seasonUrl, competitionTypeSlug(metadata.competitionType)),
+      ...metadata,
+    };
+  }
+  return null;
 }
 
 function buildPhaseItems(rawPhases: Record<string, unknown>[], competitionUrl: string): CompetitionPhase[] {
@@ -584,6 +683,7 @@ function competitionUrlMetadata(url: string): {
   externalId: string;
 } | null {
   const parsed = new URL(url);
+  if (territoryUrlMetadata(parsed)) return null;
   const match = parsed.pathname.match(
     /^(\/competitions\/saison-\d{4}-\d{4}-\d+\/)([^/]+)\/([^/]+)-(\d+)\/$/,
   );
@@ -666,13 +766,35 @@ function seasonUrl(rawSeason: Record<string, unknown>, pageUrl: URL): string | n
   return new URL(`/competitions/saison-${seasonSlug}-${externalId}/`, pageUrl).href;
 }
 
-function inferSeasonUrl(pageUrl: URL): string | null {
+export function inferSeasonUrl(pageUrl: URL): string | null {
   const match = pageUrl.pathname.match(/^(\/competitions\/saison-\d{4}-\d{4}-\d+\/)/);
   if (!match) {
     return null;
   }
 
   return new URL(match[1], pageUrl).href;
+}
+
+function assertPageSeason(componentData: unknown[], pageUrl: URL): void {
+  const expected = inferSeasonUrl(pageUrl);
+  if (!expected) return;
+  const expectedId = expected.match(/-(\d+)\/$/)?.[1];
+  for (const component of componentData.filter(isRecord)) {
+    const selectedSeason = isRecord(component.saison) ? seasonUrl(component.saison, pageUrl) : null;
+    const selectedId = stringValue(component.ext_saison_id);
+    if ((selectedSeason && selectedSeason !== expected) || (selectedId && selectedId !== expectedId)) {
+      throw new Error(`Season mismatch in FFHandball data at ${pageUrl.href}`);
+    }
+    if (!Array.isArray(component.breadcrumb)) continue;
+    for (const crumb of component.breadcrumb.filter(isRecord)) {
+      const rawUrl = stringValue(crumb.url);
+      if (!rawUrl) continue;
+      const crumbSeason = inferSeasonUrl(new URL(rawUrl, pageUrl));
+      if (crumbSeason && crumbSeason !== expected) {
+        throw new Error(`Season mismatch in FFHandball breadcrumb at ${pageUrl.href}`);
+      }
+    }
+  }
 }
 
 function inferCompetitionType(pageUrl: URL): string {
